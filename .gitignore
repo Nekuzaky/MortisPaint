@@ -458,3 +458,6 @@ ibispaint-samples/
 
 # Worktrees des agents Claude Code
 .claude/
+
+# Builds de release (zip attachés aux releases GitHub)
+dist/

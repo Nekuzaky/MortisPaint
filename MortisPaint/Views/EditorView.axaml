@@ -185,10 +185,10 @@
                 </StackPanel>
             </Border>
 
-            <Border x:Name="Toast" VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,64,0,0" Padding="14,8"
+            <Border x:Name="Toast" VerticalAlignment="Top" HorizontalAlignment="Center" Margin="16,64,16,0" Padding="14,8" MaxWidth="560"
                     CornerRadius="8" Background="{StaticResource Elevated}" BorderBrush="{StaticResource LineStrong}" BorderThickness="1"
                     IsVisible="False" IsHitTestVisible="False">
-                <TextBlock x:Name="ToastText" Foreground="{StaticResource TextStrong}" FontSize="13" />
+                <TextBlock x:Name="ToastText" Foreground="{StaticResource TextStrong}" FontSize="13" TextWrapping="Wrap" TextAlignment="Center" />
             </Border>
         </Panel>
 

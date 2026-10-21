@@ -10,6 +10,10 @@
   <PropertyGroup>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>../MortisPaint/Assets/icon.ico</ApplicationIcon>
+    <Version>0.1.0</Version>
+    <Product>MortisPaint</Product>
+    <Authors>Nekuzaky</Authors>
+    <Copyright>© 2026 Nekuzaky</Copyright>
   </PropertyGroup>
 
   <ItemGroup>

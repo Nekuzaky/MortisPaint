@@ -1,11 +1,68 @@
-# MortisPaint
+<p align="center">
+  <img src="docs/images/banner.png" alt="MortisPaint — a handmade painting app for PC and Android" width="100%">
+</p>
 
-A handmade painting app inspired by ibisPaint, "premium" features included, written in C# with **Avalonia 12** and **SkiaSharp 3**. A single code base runs on **Windows (PC)** and **Android**, with a responsive interface:
+<p align="center">
+  <a href="https://github.com/Nekuzaky/MortisPaint/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Nekuzaky/MortisPaint?include_prereleases&style=flat-square&color=E5533D&label=release"></a>
+  <img alt="Platforms" src="https://img.shields.io/badge/platforms-Windows%20%7C%20Android-1A1A1A?style=flat-square">
+  <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet&logoColor=white">
+  <img alt="Avalonia 12" src="https://img.shields.io/badge/Avalonia-12-8B44AC?style=flat-square">
+  <img alt="SkiaSharp 3" src="https://img.shields.io/badge/SkiaSharp-3-2D2D2D?style=flat-square">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-D1D1D1?style=flat-square"></a>
+</p>
 
-- **Large screens** (≥ 760 px): tool rail on the left, Brush / Colour / Layers panel on the right.
-- **Phones**: tool bar at the bottom, panels in a drawer, size / opacity sliders on the side (as in ibisPaint).
+<p align="center">
+  <b>A handmade painting app inspired by ibisPaint</b>, "premium" features included.<br>
+  Layers and folders, layered PSD for ibisPaint and Photoshop, animation, timelapse. One C# code base for PC and Android.
+</p>
+
+<p align="center">
+  <a href="https://github.com/Nekuzaky/MortisPaint/releases/latest"><b>Download for Windows</b></a> ·
+  <a href="#features">Features</a> ·
+  <a href="#ibispaint-compatibility">ibisPaint compatibility</a> ·
+  <a href="#build-from-source">Build from source</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
+
+<p align="center">
+  <img src="docs/images/screenshot-editor.png" alt="The editor on a large screen: canvas, tool rail and the Layers panel with folders" width="100%">
+</p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/screenshot-brushes.png" alt="Brush panel with live stroke previews"></td>
+    <td width="50%"><img src="docs/images/screenshot-color.png" alt="Colour panel with the colour wheel and palette"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Brushes with live stroke previews</sub></td>
+    <td align="center"><sub>Colour wheel, palette and recent colours</sub></td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="docs/images/screenshot-phone.png" alt="The phone layout: canvas, Layers drawer and Brush drawer" width="88%"><br>
+  <sub>On a phone, tools move to the bottom bar and panels open as a drawer, as in ibisPaint.</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/screenshot-gallery.png" alt="The gallery of saved artworks" width="100%"><br>
+  <sub>Every artwork is saved automatically to the gallery.</sub>
+</p>
+
+## Download
+
+**Windows:** grab `MortisPaint-<version>-win-x64.zip` from the [latest release](https://github.com/Nekuzaky/MortisPaint/releases/latest), unzip it and run `MortisPaint.exe`. It is self-contained, so .NET does not need to be installed. Windows SmartScreen may warn about an unsigned app: choose *More info → Run anyway*.
+
+**Android:** no published build yet; see [Build for Android](#build-for-android).
 
 The app's interface is in French; menu names below are given in French with their meaning.
+
+## Layout
+
+The interface is responsive:
+
+- **Large screens** (≥ 760 px): tool rail on the left, Brush / Colour / Layers panel on the right.
+- **Phones**: tool bar at the bottom, panels in a drawer, size / opacity sliders on the side.
 
 ## Style
 
@@ -78,13 +135,23 @@ MortisPaint.Android/    Android launcher
 docs/AUDIT.md           Per-feature audit and the status of its fixes
 ```
 
-## Run on PC
+## Build from source
+
+Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download).
+
+### Run on PC
 
 ```bash
 dotnet run --project MortisPaint.Desktop
 ```
 
-## Build for Android
+### Windows release build
+
+```bash
+dotnet publish MortisPaint.Desktop -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+```
+
+### Build for Android
 
 One-time prerequisites: the .NET Android workload, then the Android SDK and a JDK.
 
@@ -147,3 +214,9 @@ The APK is written to `MortisPaint.Android/bin/Release/net10.0-android/publish/`
 - `F` mirror view · `Ctrl+0` fit to screen
 - wheel: zoom · `Alt`+wheel: rotation
 - right click: eyedropper
+
+## License
+
+MortisPaint is released under the [MIT license](LICENSE).
+
+Built with [Avalonia](https://avaloniaui.net/) and [SkiaSharp](https://github.com/mono/SkiaSharp). ibisPaint and Photoshop are trademarks of their respective owners; MortisPaint is an independent project.

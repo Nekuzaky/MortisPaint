@@ -21,7 +21,7 @@
                     </Button>
                     <Button x:Name="NewButton" Classes="accent">
                         <StackPanel Orientation="Horizontal" Spacing="6">
-                            <c:LineIcon Data="{x:Static c:Icons.Plus}" Width="16" Height="16" StrokeWidth="2" Foreground="White" />
+                            <c:LineIcon Data="{x:Static c:Icons.Plus}" Width="16" Height="16" StrokeWidth="2" Foreground="{Binding $parent[Button].Foreground}" />
                             <TextBlock x:Name="NewButtonText" Text="Nouvelle toile" VerticalAlignment="Center" />
                         </StackPanel>
                     </Button>
