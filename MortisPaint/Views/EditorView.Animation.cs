@@ -18,10 +18,20 @@ namespace MortisPaint.Views;
 /// <summary>Mode animation : chaque dossier de premier niveau est une image (comme dans ibisPaint).</summary>
 public partial class EditorView
 {
+    /// <summary>Case de la bande des images : gardée tant que la liste des images ne change pas.</summary>
+    sealed record FrameCell(LayerFolder Frame, Button Button, Image Image, TextBlock Label);
+
+    const int FrameThumbSide = 120;
+    const int GifSide = 720;
+
     readonly Dictionary<LayerFolder, (int Key, WriteableBitmap Bitmap)> _frameThumbs = new();
+    readonly List<FrameCell> _frameCells = new();
+    ScaledRenderer? _frameRenderer;
+    DispatcherTimer? _frameThumbTimer;
     DispatcherTimer? _playTimer;
     bool _playing;
     bool _onionBeforePlay;
+    bool _exportingGif;
 
     static readonly int[] FpsChoices = { 2, 4, 6, 8, 12, 15, 24 };
 
@@ -63,6 +73,13 @@ public partial class EditorView
         FpsButton.Flyout = fps;
         _playTimer = new DispatcherTimer();
         _playTimer.Tick += (_, _) => StepFrame(1, wrap: true);
+        // Les miniatures périmées sont refaites ensemble, un court instant après le dernier changement.
+        _frameThumbTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+        _frameThumbTimer.Tick += (_, _) =>
+        {
+            _frameThumbTimer.Stop();
+            UpdateFrameThumbs();
+        };
     }
 
     void ToggleAnimation()
@@ -88,70 +105,165 @@ public partial class EditorView
         if (on) RebuildTimeline();
     }
 
+    /// <summary>
+    /// Met la bande des images à jour. Les boutons ne sont recréés que si la liste des images change ;
+    /// sinon seuls l'image courante, les numéros et les miniatures périmées sont mis à jour.
+    /// </summary>
     void RebuildTimeline()
     {
-        FrameStrip.Children.Clear();
-        if (!_engine.Document.AnimationEnabled) return;
+        if (_closed) return;
+        if (!_engine.Document.AnimationEnabled)
+        {
+            FrameStrip.Children.Clear();
+            _frameCells.Clear();
+            return;
+        }
         var frames = _engine.Document.Frames();
         foreach (var dead in _frameThumbs.Keys.Where(f => !frames.Contains(f)).ToList()) _frameThumbs.Remove(dead);
-        var cur = _engine.CurrentFrame;
-        for (int i = 0; i < frames.Count; i++)
+        if (_frameCells.Count != FrameStrip.Children.Count || !_frameCells.Select(c => c.Frame).SequenceEqual(frames))
         {
-            var f = frames[i];
-            bool current = f == cur;
-            var img = new Image { Source = FrameThumb(f), Stretch = Stretch.Uniform, Height = 44, Width = 58 };
-            var content = new StackPanel
+            FrameStrip.Children.Clear();
+            _frameCells.Clear();
+            foreach (var f in frames)
             {
-                Spacing = 2,
-                Children =
-                {
-                    new Border { Background = Brushes.White, CornerRadius = new CornerRadius(3), ClipToBounds = true, Child = img },
-                    new TextBlock { Text = (i + 1).ToString(), Classes = { "mono" }, FontSize = 11, HorizontalAlignment = HorizontalAlignment.Center, Foreground = current ? MortisTheme.TextStrong : MortisTheme.TextMute },
-                },
-            };
-            var b = new Button
-            {
-                Classes = { "flat" },
-                Padding = new Thickness(3),
-                BorderThickness = new Thickness(1.5),
-                BorderBrush = current ? MortisTheme.Accent : Brushes.Transparent,
-                Background = current ? MortisTheme.Active : Brushes.Transparent,
-                Content = content,
-            };
-            ToolTip.SetTip(b, f.Name);
-            b.Click += (_, _) =>
-            {
-                CommitPending();
-                StopPlayback();
-                ClearLayerSelection();
-                _engine.GoToFrame(f);
-            };
-            FrameStrip.Children.Add(b);
+                var cell = NewFrameCell(f);
+                _frameCells.Add(cell);
+                FrameStrip.Children.Add(cell.Button);
+            }
         }
+        for (int i = 0; i < _frameCells.Count; i++)
+        {
+            var cell = _frameCells[i];
+            cell.Label.Text = (i + 1).ToString();
+            ToolTip.SetTip(cell.Button, cell.Frame.Name);
+        }
+        var cur = _engine.CurrentFrame;
+        HighlightFrame(cur == null ? -1 : frames.IndexOf(cur));
+        ScheduleFrameThumbs();
     }
 
+    FrameCell NewFrameCell(LayerFolder f)
+    {
+        // Miniature déjà connue (même périmée) affichée tout de suite ; sinon rendue maintenant.
+        var img = new Image
+        {
+            Source = _frameThumbs.TryGetValue(f, out var t) ? t.Bitmap : FrameThumb(f),
+            Stretch = Stretch.Uniform, Height = 44, Width = 58,
+        };
+        var label = new TextBlock { Classes = { "mono" }, FontSize = 11, HorizontalAlignment = HorizontalAlignment.Center };
+        var content = new StackPanel
+        {
+            Spacing = 2,
+            Children =
+            {
+                new Border { Background = Brushes.White, CornerRadius = new CornerRadius(3), ClipToBounds = true, Child = img },
+                label,
+            },
+        };
+        var b = new Button
+        {
+            Classes = { "flat" },
+            Padding = new Thickness(3),
+            BorderThickness = new Thickness(1.5),
+            Content = content,
+        };
+        b.Click += (_, _) =>
+        {
+            CommitPending();
+            StopPlayback();
+            ClearLayerSelection();
+            _engine.GoToFrame(f);
+        };
+        return new FrameCell(f, b, img, label);
+    }
+
+    /// <summary>
+    /// Clé de la miniature d'une image : tout ce qui change son rendu. Pixels, propriétés et ordre des
+    /// calques de l'image et du fond commun (calques hors dossier, présents dans toutes les images),
+    /// propriétés des dossiers, papier. Les autres images n'y entrent pas : en ajouter une ne périme
+    /// pas les miniatures existantes.
+    /// </summary>
     static int FrameKey(Document doc, LayerFolder f)
     {
-        int key = 17;
-        foreach (var l in doc.Layers)
-            if (l.IsIn(f)) key = key * 31 + l.Version * 7 + (l.Visible ? 1 : 0) + l.GetHashCode();
-        return key;
+        var h = new HashCode();
+        h.Add(doc.Width);
+        h.Add(doc.Height);
+        h.Add(doc.PaperVisible);
+        h.Add(doc.PaperColor);
+        for (int i = 0; i < doc.Layers.Count; i++)
+        {
+            var l = doc.Layers[i];
+            if (l.Folder != null && !l.IsIn(f)) continue; // autre image : masquée
+            // Calque du fond écrêté juste au-dessus d'une autre image : sa base est masquée.
+            if (l.Clipping && l.Folder == null) h.Add(i > 0 && doc.Layers[i - 1].Folder != null && !doc.Layers[i - 1].IsIn(f));
+            h.Add(l);
+            h.Add(l.Version);
+            h.Add(l.Visible);
+            h.Add(l.Opacity);
+            h.Add(l.BlendMode);
+            h.Add(l.Clipping);
+            for (var p = l.Folder; p != null; p = p.Parent)
+            {
+                h.Add(p);
+                h.Add(p.Visible);
+                h.Add(p.Opacity);
+                h.Add(p.BlendMode);
+            }
+        }
+        return h.ToHashCode();
     }
+
+    /// <summary>Un filtre ou une transformation modifie le calque actif sur place, sans changer sa version.</summary>
+    bool EditingInPlace => _filter != null || Canvas.Transform != null;
 
     WriteableBitmap FrameThumb(LayerFolder f)
     {
         var doc = _engine.Document;
         int key = FrameKey(doc, f);
         if (_frameThumbs.TryGetValue(f, out var t) && t.Key == key) return t.Bitmap;
-        using var bmp = Compositor.RenderScaled(doc, 120, includePaper: true, new FrameFilter { Frame = f });
-        var wb = SkiaBitmaps.FromSkia(bmp, 120, checker: false);
-        _frameThumbs[f] = (key, wb);
+        // Composition réduite directe : les calques inchangés sont repris du cache du rendu.
+        bool editing = EditingInPlace;
+        _frameRenderer ??= new ScaledRenderer();
+        using var bmp = _frameRenderer.Render(doc, FrameThumbSide, includePaper: true, new FrameFilter { Frame = f },
+            live: editing ? doc.ActiveLayer : null);
+        var wb = SkiaBitmaps.FromSkia(bmp, FrameThumbSide, checker: false);
+        // Rendue pendant un aperçu : clé volontairement fausse, elle sera refaite après.
+        _frameThumbs[f] = (editing ? unchecked(key + 1) : key, wb);
         return wb;
     }
 
-    void RefreshFrameThumbs()
+    void ScheduleFrameThumbs()
     {
-        if (_engine.Document.AnimationEnabled && !_playing) RebuildTimeline();
+        _frameThumbTimer?.Stop();
+        _frameThumbTimer?.Start();
+    }
+
+    /// <summary>Refait les seules miniatures dont le rendu a changé, sans toucher aux boutons.</summary>
+    void UpdateFrameThumbs()
+    {
+        if (_closed || _playing || !_engine.Document.AnimationEnabled) return;
+        if (EditingInPlace)
+        {
+            // Aperçu en cours (le calque peut encore être annulé) : on attend qu'il soit validé.
+            ScheduleFrameThumbs();
+            return;
+        }
+        foreach (var cell in _frameCells)
+        {
+            var wb = FrameThumb(cell.Frame);
+            if (!ReferenceEquals(cell.Image.Source, wb)) cell.Image.Source = wb;
+        }
+    }
+
+    /// <summary>Appelé après un changement de pixels (déjà regroupé par le minuteur des miniatures).</summary>
+    void RefreshFrameThumbs() => UpdateFrameThumbs();
+
+    /// <summary>À la fermeture de l'éditeur : minuteur des miniatures arrêté, cache du rendu réduit libéré.</summary>
+    void CloseAnimation()
+    {
+        _frameThumbTimer?.Stop();
+        _frameRenderer?.Dispose();
+        _frameRenderer = null;
     }
 
     void StepFrame(int delta, bool wrap = false)
@@ -170,16 +282,23 @@ public partial class EditorView
 
     void HighlightFrame(int index)
     {
-        for (int k = 0; k < FrameStrip.Children.Count; k++)
-            if (FrameStrip.Children[k] is Button b)
-            {
-                b.BorderBrush = k == index ? MortisTheme.Accent : Brushes.Transparent;
-                b.Background = k == index ? MortisTheme.Active : Brushes.Transparent;
-            }
+        for (int k = 0; k < _frameCells.Count; k++)
+        {
+            var cell = _frameCells[k];
+            bool current = k == index;
+            cell.Button.BorderBrush = current ? MortisTheme.Accent : Brushes.Transparent;
+            cell.Button.Background = current ? MortisTheme.Active : Brushes.Transparent;
+            cell.Label.Foreground = current ? MortisTheme.TextStrong : MortisTheme.TextMute;
+        }
     }
 
     void StartPlayback()
     {
+        if (_exportingGif)
+        {
+            ShowToast("Export du GIF en cours");
+            return;
+        }
         if (!_engine.Document.AnimationEnabled || _engine.Document.Frames().Count < 2)
         {
             ShowToast("Ajoute au moins deux images pour lire l'animation");
@@ -211,6 +330,11 @@ public partial class EditorView
 
     async Task ExportAnimationGifAsync()
     {
+        if (_exportingGif)
+        {
+            ShowToast("Export du GIF déjà en cours");
+            return;
+        }
         CommitPending();
         StopPlayback();
         var doc = _engine.Document;
@@ -228,26 +352,79 @@ public partial class EditorView
             DefaultExtension = "gif",
             FileTypeChoices = new[] { GifFileType },
         });
-        if (file == null) return;
+        if (file == null || _closed || _engine.Document != doc) return;
         try
         {
-            var frames = _engine.RenderFrames(720);
-            int delay = (int)Math.Round(100.0 / Math.Max(1, doc.Fps));
-            var bytes = await Task.Run(() =>
-            {
-                using var ms = new MemoryStream();
-                using (var gif = new GifEncoder(ms, frames[0].Width, frames[0].Height))
-                    foreach (var f in frames) gif.AddFrame(f, delay);
-                foreach (var f in frames) f.Dispose();
-                return ms.ToArray();
-            });
             await using var s = await file.OpenWriteAsync();
-            await s.WriteAsync(bytes);
-            ShowToast($"Animation exportée ({frames.Count} images, {doc.Fps} i/s)");
+            int count = await WriteAnimationGifAsync(s);
+            if (count > 0) ShowToast($"Animation exportée ({count} images, {doc.Fps} i/s)");
         }
         catch (Exception ex)
         {
             ShowToast("Export impossible : " + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Écrit l'animation en GIF au fil de l'eau. Chaque image est composée directement à la taille de
+    /// sortie sur le fil d'interface (le seul à lire les calques), puis quantifiée et compressée en
+    /// arrière-plan pendant que la suivante se compose : deux images au plus en mémoire, et l'interface
+    /// traite ses événements entre deux images. Renvoie le nombre d'images, 0 si l'éditeur a été fermé
+    /// ou la toile remplacée entre-temps.
+    /// </summary>
+    async Task<int> WriteAnimationGifAsync(Stream output)
+    {
+        var doc = _engine.Document;
+        var frames = doc.Frames();
+        var delays = GifEncoder.FrameDelays(frames.Count, doc.Fps);
+        var size = ScaledRenderer.FitSize(doc.Width, doc.Height, GifSide);
+        var buffered = new BufferedStream(output, 1 << 16);
+        var gif = new GifEncoder(buffered, size.Width, size.Height);
+        using var renderer = new ScaledRenderer();
+        _exportingGif = true;
+        Canvas.InputLocked = true;
+        Task encoding = Task.CompletedTask;
+        try
+        {
+            for (int i = 0; i < frames.Count; i++)
+            {
+                if (_closed || _engine.Document != doc) return 0;
+                ShowToast($"Création du GIF… {i + 1}/{frames.Count}");
+                var bmp = renderer.Render(doc, GifSide, includePaper: true, new FrameFilter { Frame = frames[i] });
+                int delay = delays[i];
+                var previous = encoding;
+                encoding = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await previous.ConfigureAwait(false);
+                        gif.AddFrame(bmp, delay);
+                    }
+                    finally
+                    {
+                        bmp.Dispose();
+                    }
+                });
+                // L'image précédente doit être encodée avant de composer la suivante (mémoire bornée),
+                // puis on laisse passer saisie et rendu.
+                await previous;
+                await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+            }
+            await encoding;
+            await Task.Run(() =>
+            {
+                gif.Dispose();
+                buffered.Flush();
+            });
+            return frames.Count;
+        }
+        finally
+        {
+            // Le fichier n'est pas refermé tant qu'une image est en cours d'encodage.
+            try { await encoding; }
+            catch (Exception) { /* déjà signalée par l'attente principale */ }
+            _exportingGif = false;
+            if (!_playing) Canvas.InputLocked = false;
         }
     }
 }
