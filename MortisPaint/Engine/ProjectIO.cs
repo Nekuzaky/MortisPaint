@@ -136,34 +136,90 @@ public static class ProjectIO
         var entry = zip.CreateEntry(name, CompressionLevel.NoCompression);
         using var s = entry.Open();
         using var pixmap = bmp.PeekPixels();
-        pixmap.Encode(s, FastPng);
+        // Un encodage raté (mémoire) laisserait un calque vide dans un projet « enregistré » : on échoue.
+        if (!pixmap.Encode(s, FastPng)) throw new IOException($"Encodage PNG impossible ({name}).");
+    }
+
+    /// <summary>Identifiant de projet valide (Guid non nul) : seule forme acceptée pour construire un chemin.</summary>
+    public static bool TryParseId(string? s, out Guid id) => Guid.TryParse(s, out id) && id != Guid.Empty;
+
+    /// <summary>Lit une entrée de l'archive sans dépasser <paramref name="max"/> octets décompressés.</summary>
+    static MemoryStream ReadEntry(ZipArchiveEntry e, long max)
+    {
+        if (e.Length > max) throw new InvalidDataException($"Entrée {e.FullName} trop grande ({e.Length >> 10} Ko).");
+        using var s = e.Open();
+        var ms = new MemoryStream((int)Math.Clamp(e.Length, 0, 16 << 20));
+        var buf = new byte[81920];
+        int n;
+        while ((n = s.Read(buf, 0, buf.Length)) > 0)
+        {
+            if (ms.Length + n > max) throw new InvalidDataException($"Entrée {e.FullName} trop grande.");
+            ms.Write(buf, 0, n);
+        }
+        ms.Position = 0;
+        return ms;
+    }
+
+    const long MaxManifestBytes = 32 << 20;
+    const long MaxThumbnailBytes = 16 << 20;
+    const int MaxThumbnailSide = 2048;
+
+    static ProjectManifest ReadManifest(ZipArchive zip)
+    {
+        var mEntry = zip.GetEntry(ManifestEntry) ?? throw new InvalidDataException("Manifeste manquant");
+        using var s = ReadEntry(mEntry, MaxManifestBytes);
+        try
+        {
+            return JsonSerializer.Deserialize(s, MortisJsonContext.Default.ProjectManifest)
+                   ?? throw new InvalidDataException("Manifeste invalide");
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException("Manifeste invalide : " + ex.Message, ex);
+        }
     }
 
     public static Document Load(Stream input)
     {
         using var zip = new ZipArchive(input, ZipArchiveMode.Read, leaveOpen: true);
-        var mEntry = zip.GetEntry(ManifestEntry) ?? throw new InvalidDataException("Manifeste manquant");
-        ProjectManifest manifest;
-        using (var s = mEntry.Open())
-            manifest = JsonSerializer.Deserialize(s, MortisJsonContext.Default.ProjectManifest)
-                       ?? throw new InvalidDataException("Manifeste invalide");
-        if (manifest.Width <= 0 || manifest.Height <= 0 || manifest.Width > 16384 || manifest.Height > 16384)
+        var manifest = ReadManifest(zip);
+        if (manifest.Width <= 0 || manifest.Height <= 0 || manifest.Width > PsdFile.MaxSide || manifest.Height > PsdFile.MaxSide)
             throw new InvalidDataException("Dimensions invalides");
+        manifest.Layers ??= new();
+        manifest.Folders ??= new();
+        manifest.Layers.RemoveAll(le => le == null);
+        manifest.Folders.RemoveAll(fe => fe == null || fe.Id == null);
+        BitmapUtil.EnsureLayersFit(Math.Max(1, manifest.Layers.Count), manifest.Width, manifest.Height);
 
         var doc = new Document(manifest.Width, manifest.Height)
         {
-            Name = manifest.Name,
+            Name = manifest.Name ?? "Sans titre",
             PaperColor = new SKColor(manifest.PaperColor),
             PaperVisible = manifest.PaperVisible,
             AnimationEnabled = manifest.Animation,
             Fps = Math.Clamp(manifest.Fps, 1, 60),
             OnionSkin = manifest.OnionSkin,
         };
-        if (Guid.TryParse(manifest.Id, out var id)) doc.Id = id;
+        // L'Id nomme le dossier du timelapse : un Id invalide (« .. », chemin absolu) est remplacé par un Guid neuf.
+        if (TryParseId(manifest.Id, out var id)) doc.Id = id;
+        try
+        {
+            LoadLayers(zip, manifest, doc);
+        }
+        catch
+        {
+            doc.Dispose();
+            throw;
+        }
+        return doc;
+    }
+
+    static void LoadLayers(ZipArchive zip, ProjectManifest manifest, Document doc)
+    {
         var folders = new Dictionary<string, LayerFolder>();
         foreach (var fe in manifest.Folders)
         {
-            folders[fe.Id] = new LayerFolder(fe.Name)
+            folders[fe.Id] = new LayerFolder(fe.Name ?? "")
             {
                 Id = Guid.TryParse(fe.Id, out var fid) ? fid : Guid.NewGuid(),
                 Visible = fe.Visible,
@@ -173,11 +229,15 @@ public static class ProjectIO
             };
         }
         foreach (var fe in manifest.Folders)
-            if (fe.ParentId != null && folders.TryGetValue(fe.ParentId, out var parent) && parent != folders[fe.Id])
-                folders[fe.Id].Parent = parent;
+        {
+            if (fe.ParentId == null || !folders.TryGetValue(fe.ParentId, out var parent)) continue;
+            var folder = folders[fe.Id];
+            // Un parent qui descend déjà de ce dossier fermerait un cycle (A → B → A) : le dossier reste à la racine.
+            if (!parent.IsWithin(folder)) folder.Parent = parent;
+        }
         foreach (var le in manifest.Layers)
         {
-            var layer = new Layer(manifest.Width, manifest.Height, le.Name)
+            var layer = new Layer(manifest.Width, manifest.Height, le.Name ?? doc.NextLayerName())
             {
                 Visible = le.Visible,
                 Opacity = Math.Clamp(le.Opacity, 0f, 1f),
@@ -186,14 +246,13 @@ public static class ProjectIO
                 AlphaLock = le.AlphaLock,
                 Folder = le.FolderId != null && folders.TryGetValue(le.FolderId, out var lf) ? lf : null,
             };
-            var e = zip.GetEntry(le.File);
+            doc.Layers.Add(layer);
+            var e = le.File == null ? null : zip.GetEntry(le.File);
             if (e != null)
             {
-                using var es = e.Open();
-                using var ms = new MemoryStream();
-                es.CopyTo(ms);
-                ms.Position = 0;
-                using var bmp = BitmapUtil.Decode(ms);
+                // Un PNG ne dépasse guère sa taille brute : au-delà, l'entrée est corrompue (ou piégée).
+                using var ms = ReadEntry(e, (long)manifest.Width * manifest.Height * 5 + (1 << 20));
+                using var bmp = BitmapUtil.Decode(ms, manifest.Width, manifest.Height);
                 if (bmp != null)
                 {
                     using var c = new SKCanvas(layer.Bitmap);
@@ -201,24 +260,20 @@ public static class ProjectIO
                     c.DrawBitmap(bmp, 0, 0, p);
                 }
             }
-            doc.Layers.Add(layer);
         }
         if (doc.Layers.Count == 0) doc.Layers.Add(new Layer(doc.Width, doc.Height, "Calque 1"));
         doc.ActiveIndex = manifest.ActiveLayer;
-        return doc;
     }
 
+    /// <summary>Nom, taille et Id d'un projet. L'Id n'est rendu que s'il est valide (Guid, forme « N »).</summary>
     public static (string Name, int Width, int Height, string? Id)? ReadInfo(string path)
     {
         try
         {
             using var fs = File.OpenRead(path);
             using var zip = new ZipArchive(fs, ZipArchiveMode.Read);
-            var e = zip.GetEntry(ManifestEntry);
-            if (e == null) return null;
-            using var s = e.Open();
-            var m = JsonSerializer.Deserialize(s, MortisJsonContext.Default.ProjectManifest);
-            return m == null ? null : (m.Name, m.Width, m.Height, m.Id);
+            var m = ReadManifest(zip);
+            return (m.Name ?? "", m.Width, m.Height, TryParseId(m.Id, out var id) ? id.ToString("N") : null);
         }
         catch
         {
@@ -234,9 +289,10 @@ public static class ProjectIO
             using var zip = new ZipArchive(fs, ZipArchiveMode.Read);
             var e = zip.GetEntry(ThumbnailEntry);
             if (e == null) return null;
-            using var s = e.Open();
-            using var ms = new MemoryStream();
-            s.CopyTo(ms);
+            using var ms = ReadEntry(e, MaxThumbnailBytes);
+            // La miniature est décodée telle quelle par l'interface : on refuse des dimensions démesurées.
+            using (var codec = SKCodec.Create(new MemoryStream(ms.GetBuffer(), 0, (int)ms.Length)))
+                if (codec == null || codec.Info.Width > MaxThumbnailSide || codec.Info.Height > MaxThumbnailSide) return null;
             return ms.ToArray();
         }
         catch
@@ -255,8 +311,10 @@ public static class ProjectIO
             c.DrawColor(SKColors.White, SKBlendMode.DstOver);
         }
         using var pixmap = flat.PeekPixels();
-        if (format == SKEncodedImageFormat.Png) pixmap.Encode(output, new SKPngEncoderOptions(SKPngEncoderFilterFlags.AllFilters, 6));
-        else pixmap.Encode(output, format, quality);
+        bool ok = format == SKEncodedImageFormat.Png
+            ? pixmap.Encode(output, new SKPngEncoderOptions(SKPngEncoderFilterFlags.AllFilters, 6))
+            : pixmap.Encode(output, format, quality);
+        if (!ok) throw new IOException("Encodage de l'image impossible.");
     }
 
     public static string SettingsToJson(AppSettingsData data) =>

@@ -50,6 +50,7 @@ public partial class GalleryView : UserControl
     };
 
     List<GalleryItem> _items = new();
+    bool _cleaned;
     double _cardWidth = 180;
     readonly List<(Border Card, Border Thumb)> _cards = new();
 
@@ -119,6 +120,12 @@ public partial class GalleryView : UserControl
         CountText.Text = _items.Count == 0 ? "Galerie" : $"Galerie · {_items.Count} œuvre{(_items.Count > 1 ? "s" : "")}";
         EmptyState.IsVisible = _items.Count == 0;
         BuildCards();
+        if (!_cleaned)
+        {
+            // Une fois par session, à la première ouverture : timelapses orphelins et enregistrements interrompus.
+            _cleaned = true;
+            _ = Task.Run(GalleryStore.CleanOrphans);
+        }
     }
 
     void ComputeCardWidth()
@@ -220,7 +227,19 @@ public partial class GalleryView : UserControl
         void Add(string header, Func<Task> action)
         {
             var mi = new MenuItem { Header = header };
-            mi.Click += async (_, _) => await action();
+            // Handler async void : une exception qui s'en échapperait fermerait l'application.
+            mi.Click += async (_, _) =>
+            {
+                try
+                {
+                    await action();
+                }
+                catch (Exception ex)
+                {
+                    BusyLayer.IsVisible = false;
+                    await MainView.Current!.ShowMessageAsync("Erreur", ex.Message);
+                }
+            };
             menu.Items.Add(mi);
         }
         Add("Ouvrir", () => OpenAsync(item.Path));
@@ -242,7 +261,7 @@ public partial class GalleryView : UserControl
         {
             if (!await MainView.Current!.ConfirmAsync("Supprimer l'œuvre ?", $"« {item.Name} » sera définitivement supprimée.", "Supprimer"))
                 return;
-            GalleryStore.Delete(item.Path);
+            await RunBusy("Suppression…", () => GalleryStore.Delete(item.Path));
             Refresh();
         });
         return menu;
@@ -295,41 +314,58 @@ public partial class GalleryView : UserControl
             FileTypeChoices = new[] { psd ? PsdFileType : FilePickerFileTypes.ImagePng },
         });
         if (file == null) return;
-        byte[]? data = null;
-        await RunBusy("Export…", () =>
+        BusyText.Text = "Export…";
+        BusyLayer.IsVisible = true;
+        bool opened = false;
+        try
         {
-            using var doc = GalleryStore.Load(item.Path);
-            using var ms = new MemoryStream();
-            if (psd) PsdFile.Write(doc, ms);
-            else ProjectIO.ExportImage(doc, ms, SKEncodedImageFormat.Png);
-            data = ms.ToArray();
-        });
-        if (data == null) return;
-        await using var s = await file.OpenWriteAsync();
-        await s.WriteAsync(data);
+            // Écrit en flux, hors du fil d'interface : pas de copie complète en mémoire (PSD de plus de 2 Go).
+            await using (var s = await file.OpenWriteAsync())
+            {
+                opened = true;
+                await Task.Run(() =>
+                {
+                    using var doc = GalleryStore.Load(item.Path);
+                    if (psd) PsdFile.Write(doc, s);
+                    else ProjectIO.ExportImage(doc, s, SKEncodedImageFormat.Png);
+                });
+            }
+            BusyLayer.IsVisible = false;
+        }
+        catch (Exception ex)
+        {
+            BusyLayer.IsVisible = false;
+            // Disque plein ou erreur d'encodage : on ne laisse pas un fichier tronqué derrière soi.
+            if (opened)
+            {
+                try { await file.DeleteAsync(); }
+                catch { /* suppression impossible : le message suffit */ }
+            }
+            await MainView.Current!.ShowMessageAsync("Export impossible", ex.Message);
+        }
     }
 
     async Task ImportAsync()
     {
         var top = TopLevel.GetTopLevel(this);
         if (top == null) return;
-        var files = await top.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "Ouvrir un projet ou une image",
-            AllowMultiple = false,
-            FileTypeFilter = new[]
-            {
-                new FilePickerFileType("Projets, PSD et images") { Patterns = new[] { "*.mpaint", "*.psd", "*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp", "*.gif" }, MimeTypes = new[] { "image/*", "image/vnd.adobe.photoshop", "application/x-photoshop", "application/zip", "application/octet-stream" } },
-                FilePickerFileTypes.All,
-            },
-        });
-        var file = files.FirstOrDefault();
-        if (file == null) return;
-
-        BusyText.Text = "Importation…";
-        BusyLayer.IsVisible = true;
         try
         {
+            var files = await top.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "Ouvrir un projet ou une image",
+                AllowMultiple = false,
+                FileTypeFilter = new[]
+                {
+                    new FilePickerFileType("Projets, PSD et images") { Patterns = new[] { "*.mpaint", "*.psd", "*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp", "*.gif" }, MimeTypes = new[] { "image/*", "image/vnd.adobe.photoshop", "application/x-photoshop", "application/zip", "application/octet-stream" } },
+                    FilePickerFileTypes.All,
+                },
+            });
+            var file = files.FirstOrDefault();
+            if (file == null) return;
+
+            BusyText.Text = "Importation…";
+            BusyLayer.IsVisible = true;
             using var ms = new MemoryStream();
             await using (var s = await file.OpenReadAsync()) await s.CopyToAsync(ms);
             string fileName = file.Name;
@@ -359,12 +395,14 @@ public partial class GalleryView : UserControl
         }
         if (isZip)
         {
+            // Copie dans la galerie : nouveau chemin, nouvel Id (jamais celui du fichier), à enregistrer à la fermeture.
             var doc = ProjectIO.Load(ms);
             doc.ProjectPath = AppPaths.NewProjectPath();
             doc.Id = Guid.NewGuid();
+            doc.IsDirty = true;
             return doc;
         }
-        var bmp = BitmapUtil.Decode(ms) ?? throw new InvalidDataException("Format d'image non reconnu.");
+        var bmp = BitmapUtil.DecodeOriented(ms) ?? throw new InvalidDataException("Format d'image non reconnu.");
         if (bmp.Width > MaxSide || bmp.Height > MaxSide)
         {
             float s = MaxSide / (float)Math.Max(bmp.Width, bmp.Height);
@@ -372,7 +410,7 @@ public partial class GalleryView : UserControl
             bmp.Dispose();
             bmp = scaled;
         }
-        var d = new Document(bmp.Width, bmp.Height) { Name = Path.GetFileNameWithoutExtension(fileName) };
+        var d = new Document(bmp.Width, bmp.Height) { Name = Path.GetFileNameWithoutExtension(fileName), IsDirty = true };
         d.Layers.Add(new Layer(bmp, "Image"));
         d.Layers.Add(new Layer(bmp.Width, bmp.Height, "Calque 2"));
         d.ActiveIndex = 1;

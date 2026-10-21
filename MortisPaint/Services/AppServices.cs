@@ -34,6 +34,39 @@ public static class AppPaths
     public static string SettingsFile => Path.Combine(Root, "settings.json");
 
     public static string NewProjectPath() => Path.Combine(Gallery, Guid.NewGuid().ToString("N") + ProjectIO.Extension);
+
+    /// <summary>Dossier des timelapses : un sous-dossier par œuvre, nommé d'après son Id.</summary>
+    public static string TimelapseRoot => Path.Combine(Root, "Timelapse");
+
+    /// <summary>Dossier du timelapse d'une œuvre. L'Id est un Guid : jamais un chemin venu d'un fichier.</summary>
+    public static string TimelapseDir(Guid id) => Path.Combine(TimelapseRoot, id.ToString("N"));
+}
+
+/// <summary>Écriture atomique : le contenu va dans un fichier temporaire qui ne remplace la cible qu'une fois complet.</summary>
+public static class AtomicFile
+{
+    /// <summary>
+    /// Écrit <paramref name="path"/> via « path.tmp » : si l'écriture échoue (stockage plein, manque de mémoire),
+    /// l'exception remonte et la version précédente reste intacte.
+    /// </summary>
+    public static void Write(string path, Action<Stream> write)
+    {
+        var tmp = path + ".tmp";
+        try
+        {
+            using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                write(fs);
+                fs.Flush(flushToDisk: true); // sur le disque avant de remplacer l'ancienne version
+            }
+            File.Move(tmp, path, overwrite: true);
+        }
+        catch
+        {
+            try { File.Delete(tmp); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            throw;
+        }
+    }
 }
 
 public sealed record GalleryItem(string Path, string Name, int Width, int Height, DateTime Modified);
@@ -52,15 +85,15 @@ public static class GalleryStore
         return list.OrderByDescending(i => i.Modified).ToList();
     }
 
-    /// <summary>Enregistre le projet dans la galerie (écriture atomique via fichier temporaire).</summary>
+    /// <summary>
+    /// Enregistre le projet dans la galerie (écriture atomique via fichier temporaire). En cas d'échec, l'exception
+    /// remonte, la version précédente du fichier reste intacte et le document reste « modifié ».
+    /// </summary>
     public static void Save(PaintEngine engine)
     {
         var doc = engine.Document;
         doc.ProjectPath ??= AppPaths.NewProjectPath();
-        var tmp = doc.ProjectPath + ".tmp";
-        using (var fs = File.Create(tmp))
-            ProjectIO.Save(engine, fs);
-        File.Move(tmp, doc.ProjectPath, overwrite: true);
+        AtomicFile.Write(doc.ProjectPath, fs => ProjectIO.Save(engine, fs));
         doc.IsDirty = false;
     }
 
@@ -76,12 +109,59 @@ public static class GalleryStore
     {
         var info = ProjectIO.ReadInfo(path);
         if (File.Exists(path)) File.Delete(path);
-        // Le timelapse de l'œuvre part avec elle.
-        if (info?.Id is { } id)
+        // Le timelapse de l'œuvre part avec elle. L'Id vient du fichier : seul un Guid valide sert à bâtir le chemin.
+        if (ProjectIO.TryParseId(info?.Id, out var id))
         {
-            var dir = Path.Combine(AppPaths.Root, "Timelapse", id);
-            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+            var dir = AppPaths.TimelapseDir(id);
+            try
+            {
+                if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Image verrouillée : l'œuvre est supprimée, son timelapse orphelin partira au prochain nettoyage.
+            }
         }
+    }
+
+    /// <summary>
+    /// Nettoyage de la galerie : timelapses sans œuvre (dossier nommé d'après un Guid qu'aucun projet ne porte)
+    /// et fichiers temporaires d'enregistrements interrompus. Prudent : aucun timelapse n'est effacé si un projet
+    /// est illisible, ni rien de ce qui a bougé dans l'heure (une toile neuve enregistre son timelapse avant d'être enregistrée).
+    /// </summary>
+    public static void CleanOrphans()
+    {
+        var cutoff = DateTime.UtcNow - TimeSpan.FromHours(1);
+        try
+        {
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            bool complete = true;
+            foreach (var f in Directory.EnumerateFiles(AppPaths.Gallery, "*" + ProjectIO.Extension))
+            {
+                var info = ProjectIO.ReadInfo(f);
+                if (info == null) complete = false;
+                else if (info.Value.Id != null) ids.Add(info.Value.Id);
+            }
+            foreach (var tmp in Directory.EnumerateFiles(AppPaths.Gallery, "*" + ProjectIO.Extension + ".tmp"))
+                if (File.GetLastWriteTimeUtc(tmp) < cutoff) TryDelete(() => File.Delete(tmp));
+            if (!complete || !Directory.Exists(AppPaths.TimelapseRoot)) return;
+            foreach (var dir in Directory.EnumerateDirectories(AppPaths.TimelapseRoot))
+            {
+                if (!Guid.TryParseExact(Path.GetFileName(dir), "N", out var id) || ids.Contains(id.ToString("N"))) continue;
+                if (Directory.GetLastWriteTimeUtc(dir) >= cutoff) continue;
+                TryDelete(() => Directory.Delete(dir, recursive: true));
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Nettoyage non critique : on réessaiera à la prochaine ouverture.
+        }
+    }
+
+    static void TryDelete(Action delete)
+    {
+        try { delete(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
     public static string Duplicate(GalleryItem item)
@@ -133,7 +213,9 @@ public static class AppSettings
     {
         try
         {
-            File.WriteAllText(AppPaths.SettingsFile, ProjectIO.SettingsToJson(Data));
+            // Écriture atomique : une coupure en pleine écriture ne doit pas effacer palette et pinceaux.
+            var json = System.Text.Encoding.UTF8.GetBytes(ProjectIO.SettingsToJson(Data));
+            AtomicFile.Write(AppPaths.SettingsFile, s => s.Write(json, 0, json.Length));
         }
         catch
         {
