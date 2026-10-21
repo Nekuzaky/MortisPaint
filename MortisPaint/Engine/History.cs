@@ -59,6 +59,7 @@ public sealed class DocState
 {
     public List<Layer> Layers = new();
     public List<LayerProps> Props = new();
+    public List<(LayerFolder Folder, FolderProps Props)> Folders = new();
     public int Active;
     public bool PaperVisible;
     public SKColor PaperColor;
@@ -67,6 +68,7 @@ public sealed class DocState
     {
         Layers = d.Layers.ToList(),
         Props = d.Layers.Select(l => l.GetProps()).ToList(),
+        Folders = d.AllFolders().Select(f => (f, f.GetProps())).ToList(),
         Active = d.ActiveIndex,
         PaperVisible = d.PaperVisible,
         PaperColor = d.PaperColor,
@@ -77,6 +79,7 @@ public sealed class DocState
         d.Layers.Clear();
         d.Layers.AddRange(Layers);
         for (int i = 0; i < Layers.Count; i++) Layers[i].SetProps(Props[i]);
+        foreach (var (f, p) in Folders) f.SetProps(p);
         d.ActiveIndex = Active;
         d.PaperVisible = PaperVisible;
         d.PaperColor = PaperColor;

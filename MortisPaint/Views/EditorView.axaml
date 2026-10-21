@@ -3,47 +3,66 @@
              xmlns:c="using:MortisPaint.Controls"
              x:Class="MortisPaint.Views.EditorView"
              Focusable="True">
-    <Grid x:Name="RootGrid" RowDefinitions="Auto,*,Auto" ColumnDefinitions="Auto,*,Auto">
+    <Grid x:Name="RootGrid" RowDefinitions="Auto,*,Auto,Auto" ColumnDefinitions="Auto,*,Auto">
 
         <!-- Barre du haut -->
-        <Border Grid.ColumnSpan="3" Background="{StaticResource Paper}" Padding="4,3"
-                BorderBrush="{StaticResource Rule}" BorderThickness="0,0,0,1">
+        <Border Grid.ColumnSpan="3" Background="{StaticResource Sidebar}" Padding="4,3"
+                BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1">
             <Grid ColumnDefinitions="Auto,*,Auto">
-                <StackPanel Orientation="Horizontal" Spacing="0">
-                    <Button x:Name="BackButton" Classes="icon" ToolTip.Tip="Retour au carnet">
+                <StackPanel Orientation="Horizontal">
+                    <Button x:Name="BackButton" Classes="icon" ToolTip.Tip="Retour à la galerie">
                         <c:LineIcon Data="{x:Static c:Icons.Back}" />
                     </Button>
                     <Button x:Name="MenuButton" Classes="icon" ToolTip.Tip="Menu">
                         <c:LineIcon Data="{x:Static c:Icons.Menu}" />
                     </Button>
                 </StackPanel>
-                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="8,0">
-                    <TextBlock x:Name="TitleText" Classes="title" FontSize="15" TextTrimming="CharacterEllipsis" />
-                    <TextBlock x:Name="SubtitleText" Classes="faint mono" TextTrimming="CharacterEllipsis" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0" Spacing="10">
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock x:Name="TitleText" Classes="title" FontSize="16" TextTrimming="CharacterEllipsis" />
+                        <TextBlock x:Name="SubtitleText" Classes="faint mono" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                    <Border x:Name="RecBadge" VerticalAlignment="Center" CornerRadius="10" Padding="7,2" IsVisible="False"
+                            BorderBrush="{StaticResource Ribbon}" BorderThickness="1" ToolTip.Tip="Le timelapse s'enregistre">
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <Ellipse Width="7" Height="7" Fill="{StaticResource Ribbon}" VerticalAlignment="Center" />
+                            <TextBlock Text="REC" FontSize="10" FontWeight="Bold" Foreground="{StaticResource Ribbon}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
-                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="0">
-                    <Button x:Name="SymmetryButton" Classes="icon" ToolTip.Tip="Règle de symétrie">
-                        <c:LineIcon Data="{x:Static c:Icons.Symmetry}" />
-                    </Button>
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <StackPanel x:Name="WideActions" Orientation="Horizontal">
+                        <Button x:Name="GuidesButton" Classes="icon" ToolTip.Tip="Règles et symétrie">
+                            <c:LineIcon Data="{x:Static c:Icons.RulerIcon}" />
+                        </Button>
+                        <Button x:Name="ReferenceButton" Classes="icon" ToolTip.Tip="Fenêtre de référence">
+                            <c:LineIcon Data="{x:Static c:Icons.Image}" />
+                        </Button>
+                        <Button x:Name="AnimationButton" Classes="icon" ToolTip.Tip="Mode animation">
+                            <c:LineIcon Data="{x:Static c:Icons.Film}" />
+                        </Button>
+                        <Border Width="1" Height="20" Background="{StaticResource LineStrong}" Margin="4,0" VerticalAlignment="Center" />
+                    </StackPanel>
                     <Button x:Name="UndoButton" Classes="icon" ToolTip.Tip="Annuler (Ctrl+Z)">
                         <c:LineIcon Data="{x:Static c:Icons.Undo}" />
                     </Button>
                     <Button x:Name="RedoButton" Classes="icon" ToolTip.Tip="Rétablir (Ctrl+Y)">
                         <c:LineIcon Data="{x:Static c:Icons.Redo}" />
                     </Button>
-                    <Button x:Name="ZoomButton" Classes="flat" MinWidth="56" Height="40" Padding="8,0" ToolTip.Tip="Vue">
-                        <TextBlock x:Name="ZoomText" Text="100 %" Classes="mono" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                    <Button x:Name="ZoomButton" Classes="flat" MinWidth="56" Height="38" Padding="8,0" ToolTip.Tip="Vue">
+                        <TextBlock x:Name="ZoomText" Text="100 %" Classes="mono" FontSize="12" Foreground="{StaticResource TextMute}"
+                                   VerticalAlignment="Center" HorizontalAlignment="Center" />
                     </Button>
                 </StackPanel>
             </Grid>
         </Border>
 
         <!-- Rail d'outils (grand écran) -->
-        <Border x:Name="ToolRail" Grid.Row="1" Background="{StaticResource Paper}" Padding="4,6"
-                BorderBrush="{StaticResource Rule}" BorderThickness="0,0,1,0">
+        <Border x:Name="ToolRail" Grid.Row="1" Background="{StaticResource Sidebar}" Padding="4,6"
+                BorderBrush="{StaticResource Line}" BorderThickness="0,0,1,0">
             <DockPanel>
                 <Button x:Name="RailColorButton" DockPanel.Dock="Bottom" Classes="icon" Margin="0,6,0,2" ToolTip.Tip="Couleur">
-                    <Border x:Name="RailColorSwatch" Width="24" Height="24" CornerRadius="4" BorderBrush="{StaticResource Ink}" BorderThickness="1.5" />
+                    <Border x:Name="RailColorSwatch" Width="24" Height="24" CornerRadius="12" BorderBrush="{StaticResource LineStrong}" BorderThickness="2" />
                 </Button>
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel x:Name="ToolRailPanel" Spacing="2" />
@@ -58,10 +77,10 @@
             <Border x:Name="QuickSliders" Classes="float" HorizontalAlignment="Left" VerticalAlignment="Center"
                     Margin="10" Padding="2,10" Width="48">
                 <StackPanel Spacing="4" HorizontalAlignment="Center">
-                    <TextBlock x:Name="QuickSizeText" Classes="mono" HorizontalAlignment="Center" FontSize="11" />
+                    <TextBlock x:Name="QuickSizeText" Classes="mono" HorizontalAlignment="Center" FontSize="11" Foreground="{StaticResource TextMute}" />
                     <Slider x:Name="QuickSize" Orientation="Vertical" Height="170" Minimum="0" Maximum="1000" HorizontalAlignment="Center" />
-                    <Border Height="1" Background="{StaticResource Rule}" Margin="6,4" />
-                    <TextBlock x:Name="QuickOpacityText" Classes="mono" HorizontalAlignment="Center" FontSize="11" />
+                    <Border Height="1" Background="{StaticResource Line}" Margin="6,4" />
+                    <TextBlock x:Name="QuickOpacityText" Classes="mono" HorizontalAlignment="Center" FontSize="11" Foreground="{StaticResource TextMute}" />
                     <Slider x:Name="QuickOpacity" Orientation="Vertical" Height="120" Minimum="1" Maximum="100" HorizontalAlignment="Center" />
                 </StackPanel>
             </Border>
@@ -73,7 +92,85 @@
                 </ScrollViewer>
             </Border>
 
-            <Border x:Name="Sheet" Classes="float" VerticalAlignment="Bottom" Margin="0" CornerRadius="10,10,0,0"
+            <!-- Fenêtre de référence (déplaçable, redimensionnable) -->
+            <Border x:Name="RefWindow" Classes="float" HorizontalAlignment="Left" VerticalAlignment="Top"
+                    Width="300" Height="260" Margin="70,70,0,0" IsVisible="False" ClipToBounds="True">
+                <Grid RowDefinitions="Auto,*">
+                    <Border x:Name="RefHeader" Background="Transparent" Padding="10,4,4,4" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" Cursor="SizeAll">
+                        <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+                            <TextBlock Text="Référence" Classes="dim" VerticalAlignment="Center" />
+                            <Button x:Name="RefOpenButton" Grid.Column="1" Classes="icon small" ToolTip.Tip="Choisir une image">
+                                <c:LineIcon Data="{x:Static c:Icons.Folder}" Width="16" Height="16" />
+                            </Button>
+                            <Button x:Name="RefFitButton" Grid.Column="2" Classes="icon small" ToolTip.Tip="Ajuster">
+                                <c:LineIcon Data="{x:Static c:Icons.Fit}" Width="16" Height="16" />
+                            </Button>
+                            <Button x:Name="RefCloseButton" Grid.Column="3" Classes="icon small" ToolTip.Tip="Fermer">
+                                <c:LineIcon Data="{x:Static c:Icons.Close}" Width="16" Height="16" />
+                            </Button>
+                        </Grid>
+                    </Border>
+                    <c:ReferenceView x:Name="RefView" Grid.Row="1" />
+                    <Border x:Name="RefResize" Grid.Row="1" Width="22" Height="22" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                            Background="Transparent" Cursor="BottomRightCorner">
+                        <Path Data="M6,18 L18,6 M11,18 L18,11 M16,18 L18,16" Stroke="{StaticResource TextMute}" StrokeThickness="1.4" />
+                    </Border>
+                </Grid>
+            </Border>
+
+            <!-- Panneau Texte -->
+            <Border x:Name="TextPanel" Classes="float" VerticalAlignment="Bottom" HorizontalAlignment="Stretch"
+                    MaxWidth="520" Margin="10" Padding="14,12" IsVisible="False">
+                <StackPanel Spacing="8">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Text="Texte" Classes="title" FontSize="16" />
+                        <TextBlock Grid.Column="1" Text="Glisse sur la toile pour le placer" Classes="faint" VerticalAlignment="Center" />
+                    </Grid>
+                    <TextBox x:Name="TextField" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="64" MaxHeight="140" PlaceholderText="Écris ici…" />
+                    <Grid ColumnDefinitions="*,Auto">
+                        <ComboBox x:Name="FontCombo" HorizontalAlignment="Stretch" MaxDropDownHeight="320" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="6,0,0,0">
+                            <ToggleButton x:Name="BoldToggle" Classes="chip" Content="Gras" />
+                            <ToggleButton x:Name="ItalicToggle" Classes="chip" Content="Italique" />
+                        </StackPanel>
+                    </Grid>
+                    <StackPanel x:Name="TextSizeHost" />
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel x:Name="TextAlignHost" Orientation="Horizontal" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="TextCancel" Content="Annuler" />
+                            <Button x:Name="TextApply" Classes="accent" Content="Ajouter le texte" />
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Taille de la toile / de l'image -->
+            <Border x:Name="CanvasDialog" Background="#99000000" IsVisible="False">
+                <Border Classes="float" Padding="18,16" MaxWidth="420" Margin="16" VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <StackPanel Spacing="8">
+                        <TextBlock x:Name="CanvasDialogTitle" Classes="title" FontSize="18" />
+                        <TextBlock x:Name="CanvasDialogHint" Classes="dim" TextWrapping="Wrap" />
+                        <Grid ColumnDefinitions="*,Auto,*">
+                            <TextBox x:Name="CanvasW" PlaceholderText="Largeur" FontFamily="{StaticResource MonoFont}" />
+                            <TextBlock Grid.Column="1" Text="×" Margin="10,0" VerticalAlignment="Center" Foreground="{StaticResource TextMute}" />
+                            <TextBox Grid.Column="2" x:Name="CanvasH" PlaceholderText="Hauteur" FontFamily="{StaticResource MonoFont}" />
+                        </Grid>
+                        <CheckBox x:Name="KeepRatio" Content="Garder les proportions" IsChecked="True" />
+                        <StackPanel x:Name="AnchorBox" Spacing="4">
+                            <TextBlock Text="Ancrage" Classes="section" />
+                            <UniformGrid x:Name="AnchorGrid" Rows="3" Columns="3" Width="114" Height="114" HorizontalAlignment="Left" />
+                        </StackPanel>
+                        <TextBlock Text="L'historique d'annulation repart de zéro après cette opération." Classes="faint" TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,4,0,0">
+                            <Button x:Name="CanvasCancel" Content="Annuler" />
+                            <Button x:Name="CanvasApply" Classes="accent" Content="Appliquer" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Border>
+
+            <Border x:Name="Sheet" Classes="float" VerticalAlignment="Bottom" Margin="0" CornerRadius="12,12,0,0"
                     BorderThickness="1,1,1,0" IsVisible="False" />
 
             <Border x:Name="FilterPanel" Classes="float" VerticalAlignment="Bottom" HorizontalAlignment="Stretch"
@@ -89,21 +186,26 @@
             </Border>
 
             <Border x:Name="Toast" VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,64,0,0" Padding="14,8"
-                    CornerRadius="6" Background="{StaticResource Ink}" IsVisible="False" IsHitTestVisible="False">
-                <TextBlock x:Name="ToastText" Foreground="White" FontSize="13" />
+                    CornerRadius="8" Background="{StaticResource Elevated}" BorderBrush="{StaticResource LineStrong}" BorderThickness="1"
+                    IsVisible="False" IsHitTestVisible="False">
+                <TextBlock x:Name="ToastText" Foreground="{StaticResource TextStrong}" FontSize="13" />
             </Border>
         </Panel>
 
         <!-- Panneau latéral (grand écran) -->
-        <Border x:Name="SideHost" Grid.Row="1" Grid.Column="2" Width="320" Background="{StaticResource Paper}"
-                BorderBrush="{StaticResource Rule}" BorderThickness="1,0,0,0">
+        <Border x:Name="SideHost" Grid.Row="1" Grid.Column="2" Width="320" Background="{StaticResource Sidebar}"
+                BorderBrush="{StaticResource Line}" BorderThickness="1,0,0,0">
             <DockPanel x:Name="PanelsRoot">
-                <Border DockPanel.Dock="Top" BorderBrush="{StaticResource Rule}" BorderThickness="0,0,0,1" Padding="10,2,6,0">
-                    <Grid ColumnDefinitions="*,*,*,Auto">
-                        <ToggleButton x:Name="TabBrush" Classes="tab" Content="Pinceau" />
-                        <ToggleButton x:Name="TabColor" Grid.Column="1" Classes="tab" Content="Couleur" />
-                        <ToggleButton x:Name="TabLayers" Grid.Column="2" Classes="tab" Content="Calques" />
-                        <Button x:Name="SheetClose" Grid.Column="3" Classes="icon small" IsVisible="False" Margin="4,0,0,0">
+                <Border DockPanel.Dock="Top" Padding="8,8,6,4">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <Border Background="{StaticResource Bg}" CornerRadius="8" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="1">
+                            <Grid ColumnDefinitions="*,*,*">
+                                <ToggleButton x:Name="TabBrush" Classes="tab" Content="Pinceau" />
+                                <ToggleButton x:Name="TabColor" Grid.Column="1" Classes="tab" Content="Couleur" />
+                                <ToggleButton x:Name="TabLayers" Grid.Column="2" Classes="tab" Content="Calques" />
+                            </Grid>
+                        </Border>
+                        <Button x:Name="SheetClose" Grid.Column="1" Classes="icon small" IsVisible="False" Margin="4,0,0,0">
                             <c:LineIcon Data="{x:Static c:Icons.Close}" Width="16" Height="16" />
                         </Button>
                     </Grid>
@@ -111,12 +213,18 @@
                 <Panel>
                     <ScrollViewer x:Name="BrushPage" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel Margin="10,0,10,14">
-                            <TextBlock x:Name="BrushListTitle" Classes="section" Text="Pinceaux" />
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock x:Name="BrushListTitle" Classes="section" Text="Pinceaux" />
+                                <Button x:Name="NewImageBrushButton" Grid.Column="1" Classes="flat" Padding="8,4" VerticalAlignment="Bottom"
+                                        ToolTip.Tip="Créer un pinceau à partir d'une image">
+                                    <TextBlock Text="+ Depuis une image" Foreground="{DynamicResource Accent}" FontSize="12" />
+                                </Button>
+                            </Grid>
                             <StackPanel x:Name="BrushList" Spacing="1" />
                             <Grid ColumnDefinitions="*,Auto" Margin="0,8,0,0">
                                 <TextBlock Classes="section" Text="Réglages" VerticalAlignment="Center" />
                                 <Button x:Name="BrushResetButton" Grid.Column="1" Classes="flat" Padding="8,4" VerticalAlignment="Bottom">
-                                    <TextBlock Text="Réinitialiser" Foreground="{StaticResource RibbonInk}" FontSize="12" />
+                                    <TextBlock Text="Réinitialiser" Foreground="{DynamicResource Accent}" FontSize="12" />
                                 </Button>
                             </Grid>
                             <StackPanel x:Name="BrushSettingsPanel" />
@@ -127,12 +235,12 @@
                         <StackPanel Margin="12,8,12,14" Spacing="6">
                             <c:ColorWheel x:Name="Wheel" Width="232" Height="232" HorizontalAlignment="Center" Margin="0,4,0,6" />
                             <Grid ColumnDefinitions="Auto,Auto,Auto,*">
-                                <Border x:Name="PrimarySwatch" Width="40" Height="40" CornerRadius="4" BorderBrush="{StaticResource Ink}" BorderThickness="1.5" />
+                                <Border x:Name="PrimarySwatch" Width="40" Height="40" CornerRadius="8" BorderBrush="{StaticResource LineStrong}" BorderThickness="1" />
                                 <Button x:Name="SwapColorsButton" Grid.Column="1" Classes="icon small" Margin="4,0" ToolTip.Tip="Échanger les couleurs (X)">
                                     <c:LineIcon Data="{x:Static c:Icons.Swap}" Width="16" Height="16" />
                                 </Button>
-                                <Border x:Name="SecondarySwatch" Grid.Column="2" Width="28" Height="28" CornerRadius="4"
-                                        BorderBrush="{StaticResource RuleStrong}" BorderThickness="1" VerticalAlignment="Center" />
+                                <Border x:Name="SecondarySwatch" Grid.Column="2" Width="28" Height="28" CornerRadius="6"
+                                        BorderBrush="{StaticResource LineStrong}" BorderThickness="1" VerticalAlignment="Center" />
                                 <TextBox x:Name="HexBox" Grid.Column="3" Margin="10,0,0,0" VerticalAlignment="Center" FontFamily="{StaticResource MonoFont}" />
                             </Grid>
                             <StackPanel x:Name="RgbSliders" Margin="0,4,0,0" />
@@ -141,7 +249,7 @@
                             <Grid ColumnDefinitions="*,Auto">
                                 <TextBlock Classes="section" Text="Palette" VerticalAlignment="Center" />
                                 <Button x:Name="AddToPaletteButton" Grid.Column="1" Classes="flat" Padding="8,4" VerticalAlignment="Bottom">
-                                    <TextBlock Text="Ajouter la couleur" Foreground="{StaticResource RibbonInk}" FontSize="12" />
+                                    <TextBlock Text="Ajouter la couleur" Foreground="{DynamicResource Accent}" FontSize="12" />
                                 </Button>
                             </Grid>
                             <WrapPanel x:Name="PalettePanel" />
@@ -151,47 +259,98 @@
                     </ScrollViewer>
 
                     <DockPanel x:Name="LayersPage" IsVisible="False">
-                        <Border DockPanel.Dock="Top" BorderBrush="{StaticResource Rule}" BorderThickness="0,0,0,1" Padding="6,4">
+                        <Border DockPanel.Dock="Top" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" Padding="4,2">
                             <WrapPanel x:Name="LayerButtons" HorizontalAlignment="Center" />
                         </Border>
-                        <Border DockPanel.Dock="Top" BorderBrush="{StaticResource Rule}" BorderThickness="0,0,0,1" Padding="12,8,12,10">
+                        <Border DockPanel.Dock="Top" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" Padding="12,8,12,10">
                             <StackPanel Spacing="6">
-                                <TextBox x:Name="LayerNameBox" PlaceholderText="Nom du calque" />
+                                <Grid ColumnDefinitions="Auto,*">
+                                    <c:LineIcon x:Name="PropsKindIcon" Data="{x:Static c:Icons.Layers}" Width="16" Height="16" Foreground="{StaticResource TextMute}" Margin="0,0,8,0" />
+                                    <TextBox x:Name="LayerNameBox" Grid.Column="1" PlaceholderText="Nom" />
+                                </Grid>
                                 <ComboBox x:Name="BlendCombo" HorizontalAlignment="Stretch" />
                                 <Grid ColumnDefinitions="Auto,*,Auto">
                                     <TextBlock Text="Opacité" VerticalAlignment="Center" Classes="dim" />
                                     <Slider x:Name="LayerOpacity" Grid.Column="1" Minimum="0" Maximum="100" Margin="10,0" />
                                     <TextBlock x:Name="LayerOpacityText" Grid.Column="2" Classes="mono" FontSize="12" VerticalAlignment="Center" MinWidth="40" TextAlignment="Right" />
                                 </Grid>
-                                <WrapPanel>
+                                <WrapPanel x:Name="LayerFlags">
                                     <ToggleButton x:Name="ClipToggle" Classes="chip" Content="Écrêtage" ToolTip.Tip="N'affiche le calque que sur les pixels du calque du dessous" />
                                     <ToggleButton x:Name="AlphaLockToggle" Classes="chip" Content="Verrou alpha" ToolTip.Tip="Ne peint que sur les pixels déjà dessinés" />
                                 </WrapPanel>
                             </StackPanel>
                         </Border>
-                        <Border DockPanel.Dock="Bottom" x:Name="PaperRow" BorderBrush="{StaticResource Rule}" BorderThickness="0,1,0,0" Padding="6,6" />
-                        <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-                            <StackPanel x:Name="LayerList" Spacing="0" Margin="4,4" />
-                        </ScrollViewer>
+                        <Border DockPanel.Dock="Bottom" x:Name="PaperRow" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="6,6" />
+                        <TextBlock DockPanel.Dock="Bottom" x:Name="MultiHint" Classes="faint" Margin="12,4" TextWrapping="Wrap" IsVisible="False" />
+                        <Panel>
+                            <ScrollViewer x:Name="LayerScroll" HorizontalScrollBarVisibility="Disabled">
+                                <Panel>
+                                    <StackPanel x:Name="LayerList" Spacing="0" Margin="4,4" />
+                                    <Border x:Name="DropIndicator" Height="2" Background="{DynamicResource Accent}" VerticalAlignment="Top"
+                                            Margin="8,0" IsVisible="False" IsHitTestVisible="False" />
+                                </Panel>
+                            </ScrollViewer>
+                        </Panel>
                     </DockPanel>
                 </Panel>
             </DockPanel>
         </Border>
 
+        <!-- Barre d'animation -->
+        <Border x:Name="Timeline" Grid.Row="2" Grid.ColumnSpan="3" Background="{StaticResource Sidebar}" Padding="6,4"
+                BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" IsVisible="False">
+            <Grid x:Name="TimelineGrid" ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="FramePrev" Classes="icon small" ToolTip.Tip="Image précédente">
+                        <c:LineIcon Data="{x:Static c:Icons.StepPrev}" Width="16" Height="16" />
+                    </Button>
+                    <Button x:Name="PlayButton" Classes="icon small" ToolTip.Tip="Lire / arrêter">
+                        <c:LineIcon x:Name="PlayIcon" Data="{x:Static c:Icons.Play}" Width="16" Height="16" />
+                    </Button>
+                    <Button x:Name="FrameNext" Classes="icon small" ToolTip.Tip="Image suivante">
+                        <c:LineIcon Data="{x:Static c:Icons.StepNext}" Width="16" Height="16" />
+                    </Button>
+                    <Border Width="1" Height="20" Background="{StaticResource LineStrong}" Margin="4,0" />
+                </StackPanel>
+                <ScrollViewer x:Name="FrameScroll" Grid.Column="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="FrameStrip" Orientation="Horizontal" Spacing="4" Margin="2,0" />
+                </ScrollViewer>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Width="1" Height="20" Background="{StaticResource LineStrong}" Margin="4,0" />
+                    <Button x:Name="FrameAdd" Classes="icon small" ToolTip.Tip="Nouvelle image">
+                        <c:LineIcon Data="{x:Static c:Icons.Plus}" Width="16" Height="16" />
+                    </Button>
+                    <Button x:Name="FrameDuplicate" Classes="icon small" ToolTip.Tip="Dupliquer l'image">
+                        <c:LineIcon Data="{x:Static c:Icons.Copy}" Width="16" Height="16" />
+                    </Button>
+                    <Button x:Name="FrameDelete" Classes="icon small" ToolTip.Tip="Supprimer l'image">
+                        <c:LineIcon Data="{x:Static c:Icons.Delete}" Width="16" Height="16" />
+                    </Button>
+                    <ToggleButton x:Name="OnionToggle" Classes="icon small" ToolTip.Tip="Pelures d'oignon">
+                        <c:LineIcon Data="{x:Static c:Icons.Onion}" Width="16" Height="16" />
+                    </ToggleButton>
+                    <Button x:Name="FpsButton" Classes="flat" Padding="8,4" ToolTip.Tip="Images par seconde">
+                        <TextBlock x:Name="FpsText" Classes="mono" FontSize="12" Foreground="{StaticResource TextMute}" />
+                    </Button>
+                    <Button x:Name="ExportGifButton" Classes="chip" Content="GIF" ToolTip.Tip="Exporter l'animation en GIF" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
         <!-- Barre du bas (téléphone) -->
-        <Border x:Name="BottomBar" Grid.Row="2" Grid.ColumnSpan="3" Background="{StaticResource Paper}" Padding="4"
-                BorderBrush="{StaticResource Rule}" BorderThickness="0,1,0,0" IsVisible="False">
+        <Border x:Name="BottomBar" Grid.Row="3" Grid.ColumnSpan="3" Background="{StaticResource Sidebar}" Padding="4"
+                BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" IsVisible="False">
             <Grid ColumnDefinitions="*,Auto">
                 <ScrollViewer HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
                     <StackPanel x:Name="ToolBottomPanel" Orientation="Horizontal" Spacing="0" />
                 </ScrollViewer>
-                <Border Grid.Column="1" BorderBrush="{StaticResource Rule}" BorderThickness="1,0,0,0" Padding="4,0,0,0" Margin="4,0,0,0">
+                <Border Grid.Column="1" BorderBrush="{StaticResource Line}" BorderThickness="1,0,0,0" Padding="4,0,0,0" Margin="4,0,0,0">
                     <StackPanel Orientation="Horizontal" Spacing="0">
                         <Button x:Name="BottomBrushButton" Classes="icon" ToolTip.Tip="Pinceau">
                             <c:LineIcon Data="{x:Static c:Icons.Tune}" />
                         </Button>
                         <Button x:Name="BottomColorButton" Classes="icon" ToolTip.Tip="Couleur">
-                            <Border x:Name="BottomColorSwatch" Width="22" Height="22" CornerRadius="4" BorderBrush="{StaticResource Ink}" BorderThickness="1.5" />
+                            <Border x:Name="BottomColorSwatch" Width="22" Height="22" CornerRadius="11" BorderBrush="{StaticResource LineStrong}" BorderThickness="2" />
                         </Button>
                         <Button x:Name="BottomLayersButton" Classes="icon" ToolTip.Tip="Calques">
                             <c:LineIcon Data="{x:Static c:Icons.Layers}" />

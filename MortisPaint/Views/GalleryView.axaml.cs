@@ -20,9 +20,9 @@ namespace MortisPaint.Views;
 
 public partial class GalleryView : UserControl
 {
-    static readonly IBrush SheetBrush = Brushes.White;
-    static readonly IBrush DeskBrush = new SolidColorBrush(Color.FromRgb(0xE7, 0xE5, 0xE0));
-    static readonly IBrush RuleBrush = new SolidColorBrush(Color.FromRgb(0xCF, 0xCC, 0xC5));
+    static IBrush SheetBrush => MortisTheme.Elevated;
+    static readonly IBrush DeskBrush = new SolidColorBrush(Color.FromRgb(0x0A, 0x0A, 0x0A));
+    static IBrush RuleBrush => MortisTheme.LineStrong;
 
     static readonly (string Name, int W, int H)[] Presets =
     {
@@ -116,7 +116,7 @@ public partial class GalleryView : UserControl
             _items = new List<GalleryItem>();
             _ = MainView.Current?.ShowMessageAsync("Galerie", "Impossible de lire la galerie : " + ex.Message);
         }
-        CountText.Text = _items.Count == 0 ? "Carnet" : $"Carnet · {_items.Count} œuvre{(_items.Count > 1 ? "s" : "")}";
+        CountText.Text = _items.Count == 0 ? "Galerie" : $"Galerie · {_items.Count} œuvre{(_items.Count > 1 ? "s" : "")}";
         EmptyState.IsVisible = _items.Count == 0;
         BuildCards();
     }
@@ -157,7 +157,7 @@ public partial class GalleryView : UserControl
         {
             BorderBrush = RuleBrush,
             BorderThickness = new Thickness(1),
-            BoxShadow = BoxShadows.Parse("2 2 0 0 #1A2A2C30"),
+            BoxShadow = BoxShadows.Parse("0 6 18 -4 #C0000000"),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             Child = img,
@@ -197,10 +197,11 @@ public partial class GalleryView : UserControl
         {
             Width = _cardWidth,
             Margin = new Thickness(6),
-            CornerRadius = new CornerRadius(6),
+            CornerRadius = new CornerRadius(12),
             Background = SheetBrush,
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0xE4, 0xE2, 0xDD)),
+            BorderBrush = MortisTheme.Line,
             BorderThickness = new Thickness(1),
+            BoxShadow = BoxShadows.Parse("inset 0 1 0 0 #0DFFFFFF"),
             Child = new StackPanel { Children = { thumb, bottom } },
         };
         _cards.Add((card, thumb));
@@ -360,6 +361,7 @@ public partial class GalleryView : UserControl
         {
             var doc = ProjectIO.Load(ms);
             doc.ProjectPath = AppPaths.NewProjectPath();
+            doc.Id = Guid.NewGuid();
             return doc;
         }
         var bmp = BitmapUtil.Decode(ms) ?? throw new InvalidDataException("Format d'image non reconnu.");

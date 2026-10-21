@@ -74,7 +74,14 @@ public static class GalleryStore
 
     public static void Delete(string path)
     {
+        var info = ProjectIO.ReadInfo(path);
         if (File.Exists(path)) File.Delete(path);
+        // Le timelapse de l'œuvre part avec elle.
+        if (info?.Id is { } id)
+        {
+            var dir = Path.Combine(AppPaths.Root, "Timelapse", id);
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
     }
 
     public static string Duplicate(GalleryItem item)
@@ -82,6 +89,7 @@ public static class GalleryStore
         var doc = Load(item.Path);
         doc.Name = item.Name + " (copie)";
         doc.ProjectPath = AppPaths.NewProjectPath();
+        doc.Id = Guid.NewGuid();
         using var engine = new PaintEngine(doc);
         Save(engine);
         return doc.ProjectPath;

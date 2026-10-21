@@ -6,7 +6,7 @@
     android:viewportHeight="108">
     <!-- Trait d'encre laissé par la plume -->
     <path
-        android:strokeColor="#121315"
+        android:strokeColor="#F2EEE3"
         android:strokeWidth="3"
         android:strokeLineCap="round"
         android:pathData="M45.5,68.5 C52,63 58,72 68,66" />
@@ -20,7 +20,7 @@
         android:translateX="42"
         android:translateY="44">
         <path
-            android:strokeColor="#121315"
+            android:strokeColor="#F2EEE3"
             android:strokeWidth="1.7"
             android:strokeLineCap="round"
             android:strokeLineJoin="round"

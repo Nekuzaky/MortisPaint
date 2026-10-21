@@ -1,17 +1,17 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="MortisPaint.Views.MainView"
-             Background="{StaticResource Paper}"
-             Foreground="{StaticResource Ink}">
+             Background="{StaticResource Bg}"
+             Foreground="{StaticResource Text}">
     <Panel>
         <ContentControl x:Name="PageHost" />
 
-        <Border x:Name="DialogLayer" IsVisible="False" Background="#592A2C30">
+        <Border x:Name="DialogLayer" IsVisible="False" Background="#A6000000">
             <Border Classes="float" MaxWidth="440" MinWidth="280" Margin="24" Padding="20,18"
                     VerticalAlignment="Center" HorizontalAlignment="Center">
                 <StackPanel Spacing="12">
                     <TextBlock x:Name="DialogTitle" Classes="title" FontSize="18" TextWrapping="Wrap" />
-                    <TextBlock x:Name="DialogMessage" TextWrapping="Wrap" Foreground="{StaticResource InkSoft}" FontSize="14" />
+                    <TextBlock x:Name="DialogMessage" TextWrapping="Wrap" Foreground="{StaticResource TextMute}" FontSize="14" />
                     <TextBox x:Name="DialogInput" IsVisible="False" />
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,4,0,0">
                         <Button x:Name="DialogCancel" Content="Annuler" />

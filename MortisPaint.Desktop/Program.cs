@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Avalonia;
 
 namespace MortisPaint.Desktop;
@@ -16,6 +16,5 @@ sealed class Program
     public static AppBuilder BuildAvaloniaApp()
         => AppBuilder.Configure<App>()
             .UsePlatformDetect()
-            .WithMortisFonts()
             .LogToTrace();
 }

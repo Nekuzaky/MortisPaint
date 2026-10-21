@@ -13,7 +13,7 @@ namespace MortisPaint.Engine;
 /// C'est le format d'échange d'ibisPaint (« PSD (calques conservés) ») : on peut donc
 /// continuer dans MortisPaint un dessin commencé dans ibisPaint, et inversement.
 /// Pris en charge : noms (Unicode), visibilité, opacité, 17 modes de fusion, écrêtage,
-/// verrou alpha, masques de calque (appliqués), dossiers (aplatis), compressions brute / RLE / ZIP.
+/// verrou alpha, masques de calque (appliqués), dossiers (imbriqués), compressions brute / RLE / ZIP.
 /// </summary>
 public static class PsdFile
 {
@@ -59,15 +59,40 @@ public static class PsdFile
     public static void Write(Document doc, Stream output)
     {
         int w = doc.Width, h = doc.Height;
-        var layers = new List<(string Name, SKBitmap Bitmap, bool Visible, float Opacity, LayerBlendMode Blend, bool Clip, bool Lock, bool Owned)>();
+        // Enregistrements de bas en haut. Un dossier s'écrit : séparateur de fin (type 3), contenu, puis
+        // l'enregistrement du dossier lui-même (type 1 ouvert / 2 fermé) — c'est ainsi qu'ibisPaint et Photoshop les lisent.
+        var layers = new List<(string Name, SKBitmap? Bitmap, bool Visible, float Opacity, LayerBlendMode Blend, bool Clip, bool Lock, bool Owned, int Section)>();
         if (doc.PaperVisible)
         {
             var paper = new SKBitmap(BitmapUtil.Info(w, h));
             paper.Erase(doc.PaperColor);
-            layers.Add(("Papier", paper, true, 1f, LayerBlendMode.Normal, false, false, true));
+            layers.Add(("Papier", paper, true, 1f, LayerBlendMode.Normal, false, false, true, 0));
+        }
+        var open = new List<LayerFolder>();
+        void CloseTo(int depth)
+        {
+            while (open.Count > depth)
+            {
+                var f = open[^1];
+                open.RemoveAt(open.Count - 1);
+                layers.Add((f.Name, null, f.Visible, f.Opacity, f.BlendMode, false, false, false, f.Expanded ? 1 : 2));
+            }
         }
         foreach (var l in doc.Layers)
-            layers.Add((l.Name, l.Bitmap, l.Visible, l.Opacity, l.BlendMode, l.Clipping, l.AlphaLock, false));
+        {
+            var chain = new List<LayerFolder>();
+            for (var f = l.Folder; f != null; f = f.Parent) chain.Insert(0, f);
+            int common = 0;
+            while (common < open.Count && common < chain.Count && open[common] == chain[common]) common++;
+            CloseTo(common);
+            for (int k = common; k < chain.Count; k++)
+            {
+                layers.Add(("</Layer group>", null, true, 1f, LayerBlendMode.Normal, false, false, false, 3));
+                open.Add(chain[k]);
+            }
+            layers.Add((l.Name, l.Bitmap, l.Visible, l.Opacity, l.BlendMode, l.Clipping, l.AlphaLock, false, 0));
+        }
+        CloseTo(0);
 
         try
         {
@@ -94,8 +119,8 @@ public static class PsdFile
             var channelData = new List<byte[][]>();
             foreach (var l in layers)
             {
-                var r = BitmapUtil.AlphaBounds(l.Bitmap);
-                byte[][] channels = r.IsEmpty ? new[] { Raw0(), Raw0(), Raw0(), Raw0() } : EncodeLayerChannels(l.Bitmap, r);
+                var r = l.Bitmap == null ? SKRectI.Empty : BitmapUtil.AlphaBounds(l.Bitmap);
+                byte[][] channels = r.IsEmpty ? new[] { Raw0(), Raw0(), Raw0(), Raw0() } : EncodeLayerChannels(l.Bitmap!, r);
                 channelData.Add(channels);
 
                 li.I32(r.Top); li.I32(r.Left); li.I32(r.Bottom); li.I32(r.Right);
@@ -133,6 +158,15 @@ public static class PsdFile
                 ex.U32((uint)l.Name.Length);
                 ex.Bytes(uni, 0, uni.Length);
                 ex.Zeros(uniPadded - uniLen);
+                if (l.Section != 0)
+                {
+                    ex.Ascii("8BIM");
+                    ex.Ascii("lsct");
+                    ex.U32(12);
+                    ex.U32((uint)l.Section);
+                    ex.Ascii("8BIM");
+                    ex.Ascii(l.Section == 3 ? "pass" : KeyOf(l.Blend));
+                }
                 li.U32((uint)extra.Length);
                 li.Bytes(extra.GetBuffer(), 0, (int)extra.Length);
             }
@@ -161,7 +195,7 @@ public static class PsdFile
         finally
         {
             foreach (var l in layers)
-                if (l.Owned) l.Bitmap.Dispose();
+                if (l.Owned) l.Bitmap?.Dispose();
         }
     }
 
@@ -329,10 +363,34 @@ public static class PsdFile
         r.Pos = lmEnd;
 
         var doc = new Document(width, height) { Name = fallbackName };
-        ApplyFolders(layers);
+        // Reconstruit les dossiers : un séparateur (type 3) ouvre un contexte, l'enregistrement du dossier le ferme.
+        var contexts = new Stack<List<object>>();
+        contexts.Push(new List<object>());
         foreach (var l in layers)
         {
-            if (l.SectionType != 0) continue;
+            if (l.SectionType == 3)
+            {
+                contexts.Push(new List<object>());
+                continue;
+            }
+            if (l.SectionType is 1 or 2)
+            {
+                if (contexts.Count < 2) continue;
+                var folder = new LayerFolder(string.IsNullOrWhiteSpace(l.Name) ? doc.NextFolderName() : l.Name)
+                {
+                    Visible = (l.Flags & 0x02) == 0,
+                    Opacity = l.Opacity / 255f,
+                    BlendMode = l.Blend == "pass" ? LayerBlendMode.Normal : ModeOf(l.Blend),
+                    Expanded = l.SectionType == 1,
+                };
+                foreach (var item in contexts.Pop())
+                {
+                    if (item is Layer child && child.Folder == null) child.Folder = folder;
+                    else if (item is LayerFolder sub && sub.Parent == null) sub.Parent = folder;
+                }
+                contexts.Peek().Add(folder);
+                continue;
+            }
             var layer = new Layer(width, height, string.IsNullOrWhiteSpace(l.Name) ? doc.NextLayerName() : l.Name)
             {
                 Visible = (l.Flags & 0x02) == 0,
@@ -343,6 +401,7 @@ public static class PsdFile
             };
             if (l.Width > 0 && l.Height > 0) PaintLayer(layer.Bitmap, l, gray);
             doc.Layers.Add(layer);
+            contexts.Peek().Add(layer);
         }
 
         if (doc.Layers.Count == 0)
@@ -465,32 +524,6 @@ public static class PsdFile
         catch (DecoderFallbackException)
         {
             return Encoding.Latin1.GetString(bytes);
-        }
-    }
-
-    /// <summary>Les dossiers sont aplatis : leur visibilité et leur opacité se reportent sur leurs calques.</summary>
-    static void ApplyFolders(List<LayerRec> layers)
-    {
-        var stack = new Stack<int>();
-        for (int i = 0; i < layers.Count; i++)
-        {
-            var l = layers[i];
-            if (l.SectionType == 3)
-            {
-                stack.Push(i);
-            }
-            else if ((l.SectionType == 1 || l.SectionType == 2) && stack.Count > 0)
-            {
-                int start = stack.Pop();
-                bool hidden = (l.Flags & 0x02) != 0;
-                for (int k = start + 1; k < i; k++)
-                {
-                    var child = layers[k];
-                    if (child.SectionType != 0) continue;
-                    if (hidden) child.Flags |= 0x02;
-                    child.Opacity = (byte)(child.Opacity * l.Opacity / 255);
-                }
-            }
         }
     }
 

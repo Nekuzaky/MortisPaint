@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using SkiaSharp;
 
 namespace MortisPaint.Engine;
@@ -48,6 +49,62 @@ public sealed class Selection : IDisposable
                 : SKPathFillType.InverseWinding,
         };
         Set(p);
+    }
+
+    /// <summary>Combine une nouvelle forme avec la sélection existante (remplacer, ajouter, retirer).</summary>
+    public void Combine(SKPath shape, SelectionOp op)
+    {
+        if (op == SelectionOp.Replace || Path == null)
+        {
+            if (op == SelectionOp.Subtract) { shape.Dispose(); return; }
+            Set(shape);
+            return;
+        }
+        var result = Path.Op(shape, op == SelectionOp.Add ? SKPathOp.Union : SKPathOp.Difference);
+        shape.Dispose();
+        if (result == null) return;
+        Set(result.IsEmpty ? null : result);
+    }
+
+    /// <summary>
+    /// Contour vectoriel d'un masque binaire : les segments horizontaux identiques d'une ligne à l'autre
+    /// sont fusionnés en rectangles, puis le tout est simplifié en contours propres.
+    /// </summary>
+    public static SKPath MaskToPath(byte[] mask, int width, SKRectI bounds)
+    {
+        var raw = new SKPath { FillType = SKPathFillType.Winding };
+        var open = new Dictionary<(int X0, int X1), int>();
+        var current = new HashSet<(int, int)>();
+        for (int y = bounds.Top; y <= bounds.Bottom; y++)
+        {
+            current.Clear();
+            if (y < bounds.Bottom)
+            {
+                int x = bounds.Left;
+                while (x < bounds.Right)
+                {
+                    while (x < bounds.Right && mask[y * width + x] < 128) x++;
+                    if (x >= bounds.Right) break;
+                    int x0 = x;
+                    while (x < bounds.Right && mask[y * width + x] >= 128) x++;
+                    current.Add((x0, x));
+                }
+            }
+            var toClose = new List<(int, int)>();
+            foreach (var run in open.Keys)
+                if (!current.Contains(run)) toClose.Add(run);
+            foreach (var run in toClose)
+            {
+                raw.AddRect(new SKRect(run.Item1, open[run], run.Item2, y));
+                open.Remove(run);
+            }
+            foreach (var run in current)
+                if (!open.ContainsKey(run)) open[run] = y;
+        }
+        var simple = raw.Simplify();
+        if (simple == null) return raw;
+        raw.Dispose();
+        return simple;
     }
 
     public void Transform(SKMatrix m)

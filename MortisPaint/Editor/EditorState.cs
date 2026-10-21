@@ -7,9 +7,9 @@ using SkiaSharp;
 
 namespace MortisPaint.Editor;
 
-public enum ToolKind { Brush, Eraser, Smudge, Blur, Fill, Gradient, Eyedropper, Shape, Select, Transform, Hand }
+public enum ToolKind { Brush, Eraser, Smudge, Blur, Fill, Gradient, Eyedropper, Shape, Text, Select, Transform, Hand }
 public enum ShapeKind { Line, Rectangle, Ellipse }
-public enum SelectKind { Rectangle, Ellipse, Lasso }
+public enum SelectKind { Rectangle, Ellipse, Lasso, Wand }
 
 /// <summary>État de l'éditeur partagé entre la toile et les panneaux (outil, pinceaux, couleurs, options).</summary>
 public sealed class EditorState
@@ -24,6 +24,7 @@ public sealed class EditorState
         (ToolKind.Gradient, "Dégradé", "D"),
         (ToolKind.Eyedropper, "Pipette", "I"),
         (ToolKind.Shape, "Formes", "U"),
+        (ToolKind.Text, "Texte", "T"),
         (ToolKind.Select, "Sélection", "M"),
         (ToolKind.Transform, "Transformer", "V"),
         (ToolKind.Hand, "Main", "H"),
@@ -37,6 +38,8 @@ public sealed class EditorState
         var s = AppSettings.Data;
         _color = new SKColor(s.Color);
         Palette = s.Palette.Select(c => new SKColor(c)).ToList();
+        foreach (var b in s.CustomBrushes) Brushes.Add(b);
+        _timelapse = s.Timelapse;
         Recent = s.Recent.Select(c => new SKColor(c)).ToList();
         _touchDraws = s.TouchDraws;
         _twoFingerUndo = s.TwoFingerUndo;
@@ -92,6 +95,32 @@ public sealed class EditorState
     public BrushSettings CurrentBrush => CurrentBrushList[CurrentBrushIndex];
     public BrushSettings PaintBrush => Brushes[_brushIndex[ToolKind.Brush]];
     public BrushSettings EraserBrush => Erasers[_brushIndex[ToolKind.Eraser]];
+
+    /// <summary>Ajoute un pinceau personnel (pointe image) et l'enregistre dans les préférences.</summary>
+    public void AddCustomBrush(BrushSettings brush)
+    {
+        brush.IsCustom = true;
+        Brushes.Add(brush);
+        SaveCustomBrushes();
+        _brushIndex[ToolKind.Brush] = Brushes.Count - 1;
+        BrushChanged?.Invoke();
+    }
+
+    public void RemoveCustomBrush(BrushSettings brush)
+    {
+        if (!brush.IsCustom) return;
+        Brushes.Remove(brush);
+        if (brush.TipId != null) BrushTips.Delete(brush.TipId);
+        SaveCustomBrushes();
+        _brushIndex[ToolKind.Brush] = Math.Clamp(_brushIndex[ToolKind.Brush], 0, Brushes.Count - 1);
+        BrushChanged?.Invoke();
+    }
+
+    public void SaveCustomBrushes()
+    {
+        AppSettings.Data.CustomBrushes = Brushes.Where(b => b.IsCustom).ToList();
+        AppSettings.Save();
+    }
 
     public void SelectBrush(int index)
     {
@@ -184,10 +213,31 @@ public sealed class EditorState
     public ShapeKind Shape { get; set; } = ShapeKind.Line;
     public bool ShapeFilled { get; set; }
     public SelectKind SelectKind { get; set; } = SelectKind.Rectangle;
+    public SelectionOp SelectOp { get; set; } = SelectionOp.Replace;
+    public ToneKind FillTone { get; set; } = ToneKind.Solid;
+    public float ToneCell { get; set; } = 8f;
+    public float ToneDensity { get; set; } = 0.35f;
+    public float ToneAngle { get; set; } = 45f;
+
+    /// <summary>Trame courante du pot de peinture dans la couleur active (null = aplat).</summary>
+    public SKShader? CreateTone() => Tones.Create(FillTone, Color, ToneCell, ToneDensity, ToneAngle);
+
+    // Texte
+    public string TextFamily { get; set; } = OperatingSystem.IsAndroid() ? "sans-serif" : "Segoe UI";
+    public float TextSize { get; set; } = 64f;
+    public bool TextBold { get; set; }
+    public bool TextItalic { get; set; }
+    public int TextAlign { get; set; }
     public GradientKind GradientKind { get; set; } = GradientKind.Linear;
     public bool GradientToTransparent { get; set; } = true;
 
-    bool _touchDraws, _twoFingerUndo;
+    bool _touchDraws, _twoFingerUndo, _timelapse;
+
+    public bool Timelapse
+    {
+        get => _timelapse;
+        set { _timelapse = value; AppSettings.Data.Timelapse = value; AppSettings.Save(); }
+    }
 
     public bool TouchDraws
     {

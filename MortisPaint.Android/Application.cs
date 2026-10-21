@@ -1,4 +1,4 @@
-﻿using Android.App;
+using Android.App;
 using Android.Runtime;
 using Avalonia;
 using Avalonia.Android;
@@ -14,8 +14,7 @@ namespace MortisPaint.Android
 
         protected override AppBuilder CustomizeAppBuilder(AppBuilder builder)
         {
-            return base.CustomizeAppBuilder(builder)
-            .WithMortisFonts();
+            return base.CustomizeAppBuilder(builder);
         }
     }
 }

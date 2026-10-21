@@ -217,6 +217,12 @@ public static class Filters
         },
         new FilterDef
         {
+            Name = "Trame de points (demi-teinte)", Category = "Manga",
+            Params = new[] { new FilterParam("Taille des cellules", 3, 48, 8, 1, " px"), new FilterParam("Angle", 0, 90, 45, 1, "°"), new FilterParam("Garder la couleur", 0, 1, 0) },
+            Apply = (s, d, v) => Tones.Halftone(s, d, v[0], v[1], v[2] >= 0.5f),
+        },
+        new FilterDef
+        {
             Name = "Extraire le trait", Category = "Dessin",
             Params = new[] { new FilterParam("Blanc → transparent", 0, 100, 25, 1, "%"), new FilterParam("Garder la couleur", 0, 1, 0) },
             Apply = (s, d, v) => ExtractLines(s, d, v[0] / 100f, v[1] >= 0.5f),

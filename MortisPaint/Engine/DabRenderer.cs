@@ -29,7 +29,15 @@ public sealed class DabRenderer : IDisposable
             _color, _color, _color.WithAlpha(158), _color.WithAlpha(56), _color.WithAlpha(0),
         };
         if (brush.Grain > 0.01f) _grain = GrainTexture.Get(brush.Grain);
+        if (brush.Shape == BrushShape.Image)
+        {
+            _tip = BrushTips.Get(brush.TipId);
+            _tipPaint = new SKPaint { ColorFilter = SKColorFilter.CreateBlendMode(_color, SKBlendMode.SrcIn) };
+        }
     }
+
+    readonly SKImage? _tip;
+    readonly SKPaint? _tipPaint;
 
     public SKRectI TakeDirty()
     {
@@ -99,6 +107,23 @@ public sealed class DabRenderer : IDisposable
             return;
         }
 
+        if (_b.Shape == BrushShape.Image)
+        {
+            if (_tip == null || _tipPaint == null) return;
+            float deg = (_b.FollowDirection ? angle * 180f / MathF.PI : _b.Angle)
+                        + (_b.RotationJitter > 0 ? ((float)_rng.NextDouble() * 2 - 1) * _b.RotationJitter : 0);
+            float scale = d / Math.Max(_tip.Width, _tip.Height);
+            _tipPaint.Color = SKColors.White.WithAlpha(a8);
+            c.Save();
+            c.Translate(x, y);
+            c.RotateDegrees(deg);
+            c.Scale(scale);
+            c.DrawImage(_tip, -_tip.Width / 2f, -_tip.Height / 2f, new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear), _tipPaint);
+            c.Restore();
+            Mark(BitmapUtil.RoundOut(new SKRect(x - r * 1.5f, y - r * 1.5f, x + r * 1.5f, y + r * 1.5f), 2));
+            return;
+        }
+
         _paint.IsAntialias = true;
         _paint.Color = _color.WithAlpha(a8);
         bool soft = _b.Hardness < 0.97f && _b.Shape != BrushShape.Square;
@@ -150,7 +175,11 @@ public sealed class DabRenderer : IDisposable
 
     void Mark(SKRectI r) => _dirty = BitmapUtil.Union(_dirty, r);
 
-    public void Dispose() => _paint.Dispose();
+    public void Dispose()
+    {
+        _paint.Dispose();
+        _tipPaint?.Dispose();
+    }
 }
 
 /// <summary>Texture de grain « papier » partagée, fixée à la toile.</summary>

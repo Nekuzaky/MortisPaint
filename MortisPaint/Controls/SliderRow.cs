@@ -77,7 +77,7 @@ public static class BrushPreview
         using (var layerPaint = new SKPaint { Color = SKColors.White.WithAlpha((byte)(Math.Clamp(b.Opacity, 0.15f, 1f) * 255)) })
         {
             c.SaveLayer(layerPaint);
-            using var dabs = new DabRenderer(b, new SKColor(0x2A, 0x2C, 0x30), new List<SKMatrix> { SKMatrix.Identity });
+            using var dabs = new DabRenderer(b, new SKColor(0xD1, 0xD1, 0xD1), new List<SKMatrix> { SKMatrix.Identity });
             var path = new StrokePath(b, (x, y, p, a, along) => dabs.Dab(c, x, y, p, a, along));
             for (int i = 0; i <= 80; i++)
             {

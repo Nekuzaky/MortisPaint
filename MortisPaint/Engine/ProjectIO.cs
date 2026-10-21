@@ -10,7 +10,8 @@ namespace MortisPaint.Engine;
 
 public sealed class ProjectManifest
 {
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
+    public string? Id { get; set; }
     public string Name { get; set; } = "";
     public int Width { get; set; }
     public int Height { get; set; }
@@ -18,6 +19,21 @@ public sealed class ProjectManifest
     public bool PaperVisible { get; set; } = true;
     public int ActiveLayer { get; set; }
     public List<LayerEntry> Layers { get; set; } = new();
+    public List<FolderEntry> Folders { get; set; } = new();
+    public bool Animation { get; set; }
+    public int Fps { get; set; } = 8;
+    public bool OnionSkin { get; set; } = true;
+}
+
+public sealed class FolderEntry
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public bool Visible { get; set; } = true;
+    public float Opacity { get; set; } = 1f;
+    public string Blend { get; set; } = nameof(LayerBlendMode.Normal);
+    public bool Expanded { get; set; } = true;
+    public string? ParentId { get; set; }
 }
 
 public sealed class LayerEntry
@@ -29,6 +45,7 @@ public sealed class LayerEntry
     public string Blend { get; set; } = nameof(LayerBlendMode.Normal);
     public bool Clipping { get; set; }
     public bool AlphaLock { get; set; }
+    public string? FolderId { get; set; }
 }
 
 public sealed class AppSettingsData
@@ -38,6 +55,10 @@ public sealed class AppSettingsData
     public uint Color { get; set; } = 0xFF1E1E2E;
     public bool TouchDraws { get; set; } = true;
     public bool TwoFingerUndo { get; set; } = true;
+    /// <summary>Couleur d'accent de l'interface (0 = monochrome).</summary>
+    public uint Accent { get; set; }
+    public bool Timelapse { get; set; } = true;
+    public List<BrushSettings> CustomBrushes { get; set; } = new();
 }
 
 [JsonSourceGenerationOptions(WriteIndented = true)]
@@ -61,13 +82,30 @@ public static class ProjectIO
         var doc = engine.Document;
         var manifest = new ProjectManifest
         {
+            Id = doc.Id.ToString("N"),
             Name = doc.Name,
             Width = doc.Width,
             Height = doc.Height,
             PaperColor = (uint)doc.PaperColor,
             PaperVisible = doc.PaperVisible,
             ActiveLayer = doc.ActiveIndex,
+            Animation = doc.AnimationEnabled,
+            Fps = doc.Fps,
+            OnionSkin = doc.OnionSkin,
         };
+        foreach (var f in doc.AllFolders())
+        {
+            manifest.Folders.Add(new FolderEntry
+            {
+                Id = f.Id.ToString("N"),
+                Name = f.Name,
+                Visible = f.Visible,
+                Opacity = f.Opacity,
+                Blend = f.BlendMode.ToString(),
+                Expanded = f.Expanded,
+                ParentId = f.Parent?.Id.ToString("N"),
+            });
+        }
         using var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true);
         for (int i = 0; i < doc.Layers.Count; i++)
         {
@@ -82,6 +120,7 @@ public static class ProjectIO
                 Blend = l.BlendMode.ToString(),
                 Clipping = l.Clipping,
                 AlphaLock = l.AlphaLock,
+                FolderId = l.Folder?.Id.ToString("N"),
             });
             WritePng(zip, file, l.Bitmap);
         }
@@ -116,7 +155,26 @@ public static class ProjectIO
             Name = manifest.Name,
             PaperColor = new SKColor(manifest.PaperColor),
             PaperVisible = manifest.PaperVisible,
+            AnimationEnabled = manifest.Animation,
+            Fps = Math.Clamp(manifest.Fps, 1, 60),
+            OnionSkin = manifest.OnionSkin,
         };
+        if (Guid.TryParse(manifest.Id, out var id)) doc.Id = id;
+        var folders = new Dictionary<string, LayerFolder>();
+        foreach (var fe in manifest.Folders)
+        {
+            folders[fe.Id] = new LayerFolder(fe.Name)
+            {
+                Id = Guid.TryParse(fe.Id, out var fid) ? fid : Guid.NewGuid(),
+                Visible = fe.Visible,
+                Opacity = Math.Clamp(fe.Opacity, 0f, 1f),
+                BlendMode = Enum.TryParse<LayerBlendMode>(fe.Blend, out var fb) ? fb : LayerBlendMode.Normal,
+                Expanded = fe.Expanded,
+            };
+        }
+        foreach (var fe in manifest.Folders)
+            if (fe.ParentId != null && folders.TryGetValue(fe.ParentId, out var parent) && parent != folders[fe.Id])
+                folders[fe.Id].Parent = parent;
         foreach (var le in manifest.Layers)
         {
             var layer = new Layer(manifest.Width, manifest.Height, le.Name)
@@ -126,6 +184,7 @@ public static class ProjectIO
                 BlendMode = Enum.TryParse<LayerBlendMode>(le.Blend, out var bm) ? bm : LayerBlendMode.Normal,
                 Clipping = le.Clipping,
                 AlphaLock = le.AlphaLock,
+                Folder = le.FolderId != null && folders.TryGetValue(le.FolderId, out var lf) ? lf : null,
             };
             var e = zip.GetEntry(le.File);
             if (e != null)
@@ -149,7 +208,7 @@ public static class ProjectIO
         return doc;
     }
 
-    public static (string Name, int Width, int Height)? ReadInfo(string path)
+    public static (string Name, int Width, int Height, string? Id)? ReadInfo(string path)
     {
         try
         {
@@ -159,7 +218,7 @@ public static class ProjectIO
             if (e == null) return null;
             using var s = e.Open();
             var m = JsonSerializer.Deserialize(s, MortisJsonContext.Default.ProjectManifest);
-            return m == null ? null : (m.Name, m.Width, m.Height);
+            return m == null ? null : (m.Name, m.Width, m.Height, m.Id);
         }
         catch
         {

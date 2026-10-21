@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace MortisPaint.Engine;
 
-public enum BrushShape { Round, Ellipse, Square, Pixel }
+public enum BrushShape { Round, Ellipse, Square, Pixel, Image }
 
 public sealed class BrushSettings
 {
@@ -41,6 +41,13 @@ public sealed class BrushSettings
     public float TaperStart { get; set; }
 
     public float MaxSize { get; set; } = 500f;
+
+    /// <summary>Pointe image (forme <see cref="BrushShape.Image"/>), voir <see cref="BrushTips"/>.</summary>
+    public string? TipId { get; set; }
+    /// <summary>Rotation aléatoire de chaque empreinte (degrés).</summary>
+    public float RotationJitter { get; set; }
+    /// <summary>Pinceau créé par l'utilisateur (enregistré dans les préférences).</summary>
+    public bool IsCustom { get; set; }
 
     public BrushSettings Clone() => (BrushSettings)MemberwiseClone();
 }

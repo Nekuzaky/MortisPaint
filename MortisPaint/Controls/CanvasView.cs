@@ -20,19 +20,21 @@ namespace MortisPaint.Controls;
 /// </summary>
 public sealed class CanvasView : Control, ICustomHitTest
 {
-    enum Gesture { None, Tool, Pan, Pinch, Pick, Blocked }
+    enum Gesture { None, Tool, Pan, Pinch, Pick, Blocked, Handle }
+    enum HandleKind { SymmetryCenter, RulerCenter, RulerAngle, Text }
     enum TDrag { None, Move, Scale, ScaleX, ScaleY, Rotate }
 
-    // Plan de travail « carnet » : papier gris chaud pointillé, toile posée dessus avec une ombre franche.
-    static readonly IBrush DeskBrush = new SolidColorBrush(Color.FromRgb(0xE7, 0xE5, 0xE0));
-    static readonly IBrush SheetShadow = new SolidColorBrush(Color.FromArgb(0x24, 0x2A, 0x2C, 0x30));
-    static readonly IBrush SheetEdge = new SolidColorBrush(Color.FromRgb(0xB9, 0xB5, 0xAD));
-    static readonly IPen GuidePen = new Pen(new SolidColorBrush(Color.FromArgb(220, 0xB4, 0x32, 0x1E)), 1.25, new DashStyle(new double[] { 6, 4 }, 0));
-    static readonly IPen HandlePen = new Pen(new SolidColorBrush(Color.FromRgb(0x2A, 0x2C, 0x30)), 1.5);
-    static readonly IPen RibbonPen = new Pen(new SolidColorBrush(Color.FromRgb(0xB4, 0x32, 0x1E)), 1.5);
+    // Plan de travail sombre (famille Mortis) : la toile est posée dessus avec une ombre franche.
+    static readonly IBrush DeskBrush = new SolidColorBrush(Color.FromRgb(0x10, 0x10, 0x10));
+    static readonly IBrush SheetShadow = new SolidColorBrush(Color.FromArgb(0x90, 0, 0, 0));
+    static readonly IBrush SheetEdge = new SolidColorBrush(Color.FromArgb(0x9E, 0x52, 0x52, 0x52));
+    static readonly IPen GuidePen = new Pen(new SolidColorBrush(Color.FromArgb(220, 0xE5, 0x53, 0x3D)), 1.25, new DashStyle(new double[] { 6, 4 }, 0));
+    static readonly IPen RulerPen = new Pen(new SolidColorBrush(Color.FromArgb(150, 0x4D, 0xD0, 0xDA)), 1, new DashStyle(new double[] { 3, 5 }, 0));
+    static readonly IPen HandlePen = new Pen(new SolidColorBrush(Color.FromRgb(0x0C, 0x0C, 0x0C)), 1.5);
+    static readonly IPen RibbonPen = new Pen(new SolidColorBrush(Color.FromRgb(0xE5, 0x53, 0x3D)), 1.5);
     static readonly IBrush HandleFill = Brushes.White;
     static readonly IPen CursorOuter = new Pen(new SolidColorBrush(Color.FromArgb(230, 255, 255, 255)), 1.5);
-    static readonly IPen CursorInner = new Pen(new SolidColorBrush(Color.FromArgb(220, 0x2A, 0x2C, 0x30)), 0.75);
+    static readonly IPen CursorInner = new Pen(new SolidColorBrush(Color.FromArgb(220, 0x0C, 0x0C, 0x0C)), 0.75);
     const double DotStep = 22;
     static ImageBrush? _dotGrid;
 
@@ -48,7 +50,7 @@ public sealed class CanvasView : Control, ICustomHitTest
             SkiaBitmaps.Draw(bmp, c =>
             {
                 c.Clear(SKColors.Transparent);
-                using var p = new SKPaint { Color = new SKColor(0xC4, 0xC0, 0xB8), IsAntialias = true };
+                using var p = new SKPaint { Color = new SKColor(0x2A, 0x2A, 0x2A), IsAntialias = true };
                 c.DrawCircle(side / 2f, side / 2f, 1.6f, p);
             });
             _dotGrid = new ImageBrush(bmp)
@@ -106,6 +108,11 @@ public sealed class CanvasView : Control, ICustomHitTest
     Point _pickPos;
     SKColor? _pickRing;
 
+    // Poignées (centre de symétrie, règle) et contrainte de la règle
+    HandleKind _handle;
+    SKPoint _handleOffset;
+    Func<SKPoint, SKPoint>? _constraint;
+
     // Transformation
     SKPoint _tPivot, _tOffset, _tStartOffset;
     float _tScaleX = 1, _tScaleY = 1, _tRot, _tStartSX, _tStartSY, _tStartRot;
@@ -129,6 +136,14 @@ public sealed class CanvasView : Control, ICustomHitTest
 
     public bool SpacePan { get; set; }
     public bool InputLocked { get; set; }
+
+    /// <summary>Texte en cours de saisie (outil Texte) : il se déplace en glissant sur la toile.</summary>
+    public TextSession? Text { get; set; }
+
+    /// <summary>L'utilisateur a touché la toile avec l'outil Texte, sans texte en cours.</summary>
+    public event Action<SKPoint>? TextRequested;
+    /// <summary>La règle ou le centre de symétrie a été déplacé.</summary>
+    public event Action? GuidesMoved;
     public TransformSession? Transform { get; private set; }
 
     public double Zoom => _zoom;
@@ -394,7 +409,31 @@ public sealed class CanvasView : Control, ICustomHitTest
         {
             foreach (var (a, b) in sym.GetGuides(_engine.Width, _engine.Height))
                 ctx.DrawLine(GuidePen, ToScreen(a), ToScreen(b));
-            ctx.DrawEllipse(HandleFill, HandlePen, ToScreen(new SKPoint(sym.CenterX, sym.CenterY)), 5, 5);
+            ctx.DrawEllipse(HandleFill, RibbonPen, ToScreen(new SKPoint(sym.CenterX, sym.CenterY)), 7, 7);
+        }
+        var ruler = _engine.Ruler;
+        if (ruler.IsActive)
+        {
+            using (ctx.PushClip(new Rect(Bounds.Size)))
+                foreach (var (a, b) in ruler.GetGuides(_engine.Width, _engine.Height))
+                    ctx.DrawLine(RulerPen, ToScreen(a), ToScreen(b));
+            var c = ToScreen(ruler.Center);
+            if (ruler.Mode == RulerMode.Concentric)
+            {
+                foreach (float rr in new[] { 0.1f, 0.2f, 0.32f, 0.46f })
+                {
+                    double rad = rr * Math.Max(_engine.Width, _engine.Height) * _zoom;
+                    ctx.DrawEllipse(null, RulerPen, c, rad, rad);
+                }
+            }
+            ctx.DrawEllipse(HandleFill, HandlePen, c, 8, 8);
+            ctx.DrawEllipse(null, new Pen(new SolidColorBrush(Color.FromRgb(0x4D, 0xD0, 0xDA)), 2), c, 11, 11);
+            if (ruler.Mode == RulerMode.Parallel)
+            {
+                var knob = RulerKnob();
+                ctx.DrawLine(HandlePen, c, knob);
+                ctx.DrawEllipse(HandleFill, HandlePen, knob, 6, 6);
+            }
         }
 
         double thin = 1.5 / _zoom;
@@ -481,6 +520,7 @@ public sealed class CanvasView : Control, ICustomHitTest
         var pos = pt.Position;
         e.Handled = true;
         _shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        _alt = e.KeyModifiers.HasFlag(KeyModifiers.Alt);
         CanvasPressed?.Invoke();
 
         if (e.Pointer.Type == PointerType.Touch)
@@ -521,6 +561,7 @@ public sealed class CanvasView : Control, ICustomHitTest
             BeginPan(pos);
             return;
         }
+        if (pt.Properties.IsLeftButtonPressed && TryBeginHandle(e.Pointer.Id, pos)) return;
         if (pt.Properties.IsRightButtonPressed || pt.Properties.IsBarrelButtonPressed)
         {
             _gesture = Gesture.Pick;
@@ -569,6 +610,9 @@ public sealed class CanvasView : Control, ICustomHitTest
             case Gesture.Pick:
                 if (e.Pointer.Id == _toolPointerId) Pick(pos);
                 break;
+            case Gesture.Handle:
+                if (e.Pointer.Id == _toolPointerId) MoveHandle(pos);
+                break;
             default:
                 if (e.Pointer.Type != PointerType.Touch && EditorState.IsBrushTool(_state.Tool)) InvalidateVisual();
                 break;
@@ -585,6 +629,7 @@ public sealed class CanvasView : Control, ICustomHitTest
             _touches.Remove(e.Pointer.Id);
             _touchStarts.Remove(e.Pointer.Id);
             if (_gesture == Gesture.Tool && e.Pointer.Id == _toolPointerId) EndToolGesture(commit: true);
+            else if (_gesture == Gesture.Handle && e.Pointer.Id == _toolPointerId) _gesture = Gesture.None;
             else if (_gesture == Gesture.Pick && e.Pointer.Id == _toolPointerId) EndPick();
             else if (_gesture == Gesture.Pinch && _touches.Count < 2) _gesture = Gesture.Blocked;
 
@@ -739,11 +784,97 @@ public sealed class CanvasView : Control, ICustomHitTest
 
     // ================================================================ outils
 
+    /// <summary>Saisit une poignée (centre de symétrie, règle, texte) si le pointeur est dessus.</summary>
+    bool TryBeginHandle(int pointerId, Point pos)
+    {
+        if (_engine == null || _state == null) return false;
+        const double hit = 22;
+        var cp = ToCanvas(pos);
+        void Start(HandleKind kind, SKPoint anchor)
+        {
+            _handle = kind;
+            _handleOffset = new SKPoint(anchor.X - cp.X, anchor.Y - cp.Y);
+            _gesture = Gesture.Handle;
+            _toolPointerId = pointerId;
+        }
+        var ruler = _engine.Ruler;
+        if (ruler.IsActive)
+        {
+            if (ruler.Mode == RulerMode.Parallel && Dist(pos, RulerKnob()) < hit) { Start(HandleKind.RulerAngle, ruler.Center); return true; }
+            if (Dist(pos, ToScreen(ruler.Center)) < hit) { Start(HandleKind.RulerCenter, ruler.Center); return true; }
+        }
+        var sym = _engine.Symmetry;
+        if (sym.IsActive && Dist(pos, ToScreen(new SKPoint(sym.CenterX, sym.CenterY))) < hit)
+        {
+            Start(HandleKind.SymmetryCenter, new SKPoint(sym.CenterX, sym.CenterY));
+            return true;
+        }
+        if (Text != null && _state.Tool == ToolKind.Text)
+        {
+            Start(HandleKind.Text, Text.Origin);
+            return true;
+        }
+        return false;
+    }
+
+    Point RulerKnob()
+    {
+        var r = _engine!.Ruler;
+        var c = ToScreen(r.Center);
+        double a = r.AngleDegrees * Math.PI / 180;
+        var tip = ToScreen(new SKPoint(r.CenterX + (float)Math.Cos(a) * 100, r.CenterY + (float)Math.Sin(a) * 100));
+        var dir = tip - c;
+        double len = Math.Sqrt(dir.X * dir.X + dir.Y * dir.Y);
+        if (len < 1e-3) return c + new Vector(70, 0);
+        return c + dir / len * 70;
+    }
+
+    void MoveHandle(Point pos)
+    {
+        if (_engine == null) return;
+        var cp = ToCanvas(pos);
+        var p = new SKPoint(cp.X + _handleOffset.X, cp.Y + _handleOffset.Y);
+        switch (_handle)
+        {
+            case HandleKind.SymmetryCenter:
+                _engine.Symmetry.CenterX = p.X;
+                _engine.Symmetry.CenterY = p.Y;
+                break;
+            case HandleKind.RulerCenter:
+                _engine.Ruler.CenterX = p.X;
+                _engine.Ruler.CenterY = p.Y;
+                break;
+            case HandleKind.RulerAngle:
+            {
+                var r = _engine.Ruler;
+                float deg = MathF.Atan2(cp.Y - r.CenterY, cp.X - r.CenterX) * 180f / MathF.PI;
+                if (_shift) deg = MathF.Round(deg / 15f) * 15f;
+                r.AngleDegrees = deg;
+                break;
+            }
+            case HandleKind.Text:
+                Text?.Update(Text.Style, p);
+                break;
+        }
+        GuidesMoved?.Invoke();
+        InvalidateVisual();
+    }
+
+    SKPoint Constrain(SKPoint p) => _constraint?.Invoke(p) ?? p;
+
     void BeginTool(int pointerId, Point pos, float pressure, bool penEraser)
     {
         var engine = _engine!;
         var state = _state!;
+        if (TryBeginHandle(pointerId, pos)) return;
         var cp = ToCanvas(pos);
+        _constraint = null;
+        var tool0 = penEraser ? ToolKind.Eraser : state.Tool;
+        if (engine.Ruler.IsActive && tool0 is ToolKind.Brush or ToolKind.Eraser or ToolKind.Smudge or ToolKind.Blur)
+        {
+            _constraint = engine.Ruler.Begin(cp, (float)(6 / _zoom));
+            cp = Constrain(cp);
+        }
         _toolPointerId = pointerId;
         _dragStart = _dragEnd = cp;
         var tool = penEraser ? ToolKind.Eraser : state.Tool;
@@ -776,8 +907,9 @@ public sealed class CanvasView : Control, ICustomHitTest
                 _gesture = Gesture.Tool;
                 break;
             case ToolKind.Fill:
-                engine.Fill((int)MathF.Floor(cp.X), (int)MathF.Floor(cp.Y), state.Color, state.FillTolerance,
-                    state.FillExpand, state.FillSampleAll, state.FillOpacity);
+                using (var tone = state.CreateTone())
+                    engine.Fill((int)MathF.Floor(cp.X), (int)MathF.Floor(cp.Y), state.Color, state.FillTolerance,
+                        state.FillExpand, state.FillSampleAll, state.FillOpacity, tone);
                 state.PushRecent(state.Color);
                 _gesture = Gesture.Blocked;
                 break;
@@ -793,6 +925,15 @@ public sealed class CanvasView : Control, ICustomHitTest
             case ToolKind.Shape:
                 _shapeSession = new BrushStrokeSession(engine, state.PaintBrush, state.Color, StrokeMode.Paint, (float)_zoom);
                 _gesture = Gesture.Tool;
+                break;
+            case ToolKind.Text:
+                TextRequested?.Invoke(cp);
+                _gesture = Gesture.Blocked;
+                break;
+            case ToolKind.Select when state.SelectKind == SelectKind.Wand:
+                if (!engine.SelectByColor((int)MathF.Floor(cp.X), (int)MathF.Floor(cp.Y), state.FillTolerance, state.FillSampleAll, CurrentSelectOp()))
+                    Message?.Invoke("Rien à sélectionner ici");
+                _gesture = Gesture.Blocked;
                 break;
             case ToolKind.Select:
                 _lasso = new List<SKPoint> { cp };
@@ -824,7 +965,7 @@ public sealed class CanvasView : Control, ICustomHitTest
             case ToolKind.Blur:
                 foreach (var ip in e.GetIntermediatePoints(this))
                 {
-                    var c = ToCanvas(ip.Position);
+                    var c = Constrain(ToCanvas(ip.Position));
                     var input = new InputPoint(c.X, c.Y, PressureOf(e.Pointer.Type, ip.Properties));
                     _stroke?.Add(input);
                     _pixel?.Add(input);
@@ -901,6 +1042,7 @@ public sealed class CanvasView : Control, ICustomHitTest
             _lasso = null;
         }
         _tDrag = TDrag.None;
+        _constraint = null;
         _gesture = Gesture.None;
         _toolPointerId = -1;
         InvalidateVisual();
@@ -929,6 +1071,10 @@ public sealed class CanvasView : Control, ICustomHitTest
         InvalidateVisual();
     }
 
+    bool _alt;
+
+    SelectionOp CurrentSelectOp() => _shift ? SelectionOp.Add : _alt ? SelectionOp.Subtract : _state!.SelectOp;
+
     void FinishSelection()
     {
         if (_engine == null || _state == null || _lasso == null) return;
@@ -937,7 +1083,7 @@ public sealed class CanvasView : Control, ICustomHitTest
         {
             if (_lasso.Count < 3)
             {
-                _engine.Selection.Clear();
+                if (CurrentSelectOp() == SelectionOp.Replace) _engine.Selection.Clear();
                 path.Dispose();
                 return;
             }
@@ -950,14 +1096,14 @@ public sealed class CanvasView : Control, ICustomHitTest
             var r = NormalizedRect(_dragStart, _dragEnd);
             if (r.Width * _zoom < 3 && r.Height * _zoom < 3)
             {
-                _engine.Selection.Clear();
+                if (CurrentSelectOp() == SelectionOp.Replace) _engine.Selection.Clear();
                 path.Dispose();
                 return;
             }
             if (_state.SelectKind == SelectKind.Ellipse) path.AddOval(r);
             else path.AddRect(r);
         }
-        _engine.Selection.Set(path);
+        _engine.Selection.Combine(path, CurrentSelectOp());
     }
 
     void UpdateShape()

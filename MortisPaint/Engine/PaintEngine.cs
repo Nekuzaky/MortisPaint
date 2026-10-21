@@ -5,7 +5,7 @@ using SkiaSharp;
 namespace MortisPaint.Engine;
 
 /// <summary>Point d'entrée du moteur : document, composition, historique et opérations sur les calques.</summary>
-public sealed class PaintEngine : IDisposable
+public sealed partial class PaintEngine : IDisposable
 {
     ILayerPreview? _preview;
     SKRectI _dirty = SKRectI.Empty;
@@ -62,7 +62,7 @@ public sealed class PaintEngine : IDisposable
         rect = _dirty;
         if (_dirty.IsEmpty) return false;
         _dirty = SKRectI.Empty;
-        Compositor.Render(Composite, Document, rect, _preview, includePaper: true);
+        Compositor.Render(Composite, Document, rect, _preview, includePaper: true, CurrentFrameFilter());
         return true;
     }
 
@@ -96,7 +96,7 @@ public sealed class PaintEngine : IDisposable
     {
         Structure("Nouveau calque", () =>
         {
-            var l = new Layer(Width, Height, Document.NextLayerName());
+            var l = new Layer(Width, Height, Document.NextLayerName()) { Folder = ActiveLayer.Folder };
             Document.Layers.Insert(Document.ActiveIndex + 1, l);
             Document.ActiveIndex++;
         });
@@ -133,15 +133,39 @@ public sealed class PaintEngine : IDisposable
         });
     }
 
+    /// <summary>
+    /// Monte (delta &gt; 0) ou descend le calque actif d'un cran. Au bord d'un dossier, le calque en sort ;
+    /// face à un dossier voisin, il y entre. Sinon il échange sa place avec son voisin.
+    /// </summary>
     public void MoveLayer(int delta)
     {
-        int i = Document.ActiveIndex, j = i + delta;
-        if (j < 0 || j >= Document.Layers.Count) return;
+        var layers = Document.Layers;
+        int i = Document.ActiveIndex, n = layers.Count;
+        var l = layers[i];
+        var f = l.Folder;
+        int j = delta > 0 ? i + 1 : i - 1;
+        bool atEdge = f != null && (j < 0 || j >= n || !layers[j].IsIn(f));
+        if (!atEdge && (j < 0 || j >= n)) return;
         Structure("Déplacer le calque", () =>
         {
-            var l = Document.Layers[i];
-            Document.Layers.RemoveAt(i);
-            Document.Layers.Insert(j, l);
+            if (atEdge)
+            {
+                l.Folder = f!.Parent;
+                return;
+            }
+            var neighbour = layers[j];
+            if (neighbour.Folder != f)
+            {
+                var g = neighbour.Folder;
+                while (g != null && g.Parent != f) g = g.Parent;
+                if (g != null)
+                {
+                    l.Folder = g;
+                    return;
+                }
+            }
+            layers[i] = neighbour;
+            layers[j] = l;
             Document.ActiveIndex = j;
         });
     }
@@ -254,13 +278,14 @@ public sealed class PaintEngine : IDisposable
         });
     }
 
-    public void FillSelection(SKColor color)
+    /// <summary>Remplit la sélection (ou le calque) d'une couleur, ou d'une trame si <paramref name="tone"/> est fourni.</summary>
+    public void FillSelection(SKColor color, SKShader? tone = null)
     {
         var layer = ActiveLayer;
-        PixelEdit("Remplir", layer, Selection.Bounds, c =>
+        PixelEdit(tone == null ? "Remplir" : "Trame", layer, Selection.Bounds, c =>
         {
             Selection.ClipCanvas(c);
-            using var p = new SKPaint { Color = color, BlendMode = layer.AlphaLock ? SKBlendMode.SrcATop : SKBlendMode.SrcOver };
+            using var p = new SKPaint { Color = color, Shader = tone, BlendMode = layer.AlphaLock ? SKBlendMode.SrcATop : SKBlendMode.SrcOver };
             c.DrawPaint(p);
         });
     }
@@ -300,7 +325,7 @@ public sealed class PaintEngine : IDisposable
     /// <summary>Ajoute une image comme nouveau calque, centrée et réduite si nécessaire.</summary>
     public Layer ImportImage(SKBitmap image, string name)
     {
-        var layer = new Layer(Width, Height, name);
+        var layer = new Layer(Width, Height, name) { Folder = ActiveLayer.Folder };
         float scale = MathF.Min(1f, MathF.Min(Width / (float)image.Width, Height / (float)image.Height));
         float w = image.Width * scale, h = image.Height * scale;
         using (var c = new SKCanvas(layer.Bitmap))
@@ -313,7 +338,7 @@ public sealed class PaintEngine : IDisposable
         return InsertLayer(layer, "Importer une image");
     }
 
-    public void Fill(int x, int y, SKColor color, int tolerance, int expand, bool sampleAll, float opacity)
+    public void Fill(int x, int y, SKColor color, int tolerance, int expand, bool sampleAll, float opacity, SKShader? tone = null)
     {
         if (x < 0 || y < 0 || x >= Width || y >= Height) return;
         var layer = ActiveLayer;
@@ -336,6 +361,7 @@ public sealed class PaintEngine : IDisposable
             using var p = new SKPaint
             {
                 Color = color.WithAlpha((byte)Math.Clamp(opacity * 255f, 0, 255)),
+                Shader = tone,
                 BlendMode = layer.AlphaLock ? SKBlendMode.SrcATop : SKBlendMode.SrcOver,
             };
             c.DrawBitmap(alpha, bounds.Left, bounds.Top, p);

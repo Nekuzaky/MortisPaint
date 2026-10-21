@@ -7,6 +7,6 @@
         Width="1360" Height="860"
         MinWidth="360" MinHeight="520"
         WindowStartupLocation="CenterScreen"
-        Background="{StaticResource Paper}">
+        Background="{StaticResource Bg}">
     <views:MainView />
 </Window>

@@ -55,6 +55,24 @@ public static class Icons
     public static readonly Geometry Swap = G("M7,4 L4,7 L7,10 M4,7 H18 M17,14 L20,17 L17,20 M20,17 H6");
     public static readonly Geometry Nib = G("M12,3 L18,10 L14.5,20 H9.5 L6,10 Z M12,3 V12 M12,12 A1.4,1.4 0 1,0 12,14.8 A1.4,1.4 0 1,0 12,12 M9.5,20 V21.5 H14.5 V20");
 
+    public static readonly Geometry Text = G("M5,6 V4 H19 V6 M12,4 V20 M9,20 H15");
+    public static readonly Geometry Film = G("M4,4 H20 V20 H4 Z M8,4 V20 M16,4 V20 M4,8 H8 M4,12 H8 M4,16 H8 M16,8 H20 M16,12 H20 M16,16 H20");
+    public static readonly Geometry Play = G("M8,5 L19,12 L8,19 Z");
+    public static readonly Geometry Stop = G("M7,7 H17 V17 H7 Z");
+    public static readonly Geometry StepPrev = G("M6,5 V19 M18,5 L9,12 L18,19 Z");
+    public static readonly Geometry StepNext = G("M18,5 V19 M6,5 L15,12 L6,19 Z");
+    public static readonly Geometry ChevronRight = G("M9,6 L15,12 L9,18");
+    public static readonly Geometry ChevronDown = G("M6,9 L12,15 L18,9");
+    public static readonly Geometry Grip = G("M9,6 A1,1 0 1,0 9.01,6 M15,6 A1,1 0 1,0 15.01,6 M9,12 A1,1 0 1,0 9.01,12 M15,12 A1,1 0 1,0 15.01,12 M9,18 A1,1 0 1,0 9.01,18 M15,18 A1,1 0 1,0 15.01,18");
+    public static readonly Geometry Wand = G("M4,20 L15,9 M13,7 L17,11 M17,3 V6 M15.5,4.5 H18.5 M20,8 V10 M19,9 H21 M10,3 V5 M9,4 H11");
+    public static readonly Geometry RulerIcon = G("M3,15 L15,3 L21,9 L9,21 Z M7,11 L9,13 M10,8 L13,11 M13,5 L15,7 M16,8 L18,10");
+    public static readonly Geometry FolderPlus = G("M3,6.5 C3,5.7 3.7,5 4.5,5 H9 L11,7 H19.5 C20.3,7 21,7.7 21,8.5 V17.5 C21,18.3 20.3,19 19.5,19 H4.5 C3.7,19 3,18.3 3,17.5 Z M12,10 V16 M9,13 H15");
+    public static readonly Geometry Onion = G("M12,4 C16.4,4 20,7.6 20,12 C20,16.4 16.4,20 12,20 C7.6,20 4,16.4 4,12 C4,7.6 7.6,4 12,4 Z M12,7 C14.8,7 17,9.2 17,12 C17,14.8 14.8,17 12,17 M12,10 C13.1,10 14,10.9 14,12 C14,13.1 13.1,14 12,14");
+    public static readonly Geometry Crop = G("M6,2 V18 H22 M2,6 H18 V22");
+    public static readonly Geometry Clock = G("M12,3 C17,3 21,7 21,12 C21,17 17,21 12,21 C7,21 3,17 3,12 C3,7 7,3 12,3 Z M12,7 V12 L15.5,14");
+    public static readonly Geometry Pin = G("M9,3 H15 M10,3 V9 L6,13 H18 L14,9 V3 M12,13 V21");
+    public static readonly Geometry Settings = G("M4,6 H20 M4,12 H20 M4,18 H20 M8,4 V8 M15,10 V14 M10,16 V20");
+
     static Geometry G(string data) => Geometry.Parse(data);
 
     public static LineIcon Make(Geometry g, double size = 20) => new() { Data = g, Width = size, Height = size };

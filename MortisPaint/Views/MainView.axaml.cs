@@ -40,8 +40,8 @@ public partial class MainView : UserControl
         var insets = top.InsetsManager;
         if (insets != null)
         {
-            // Barres système couleur papier (icônes sombres) pour le thème clair.
-            insets.SystemBarColor = Avalonia.Media.Color.FromRgb(0xF6, 0xF5, 0xF2);
+            // Barres système sombres, comme le reste de l'interface.
+            insets.SystemBarColor = Avalonia.Media.Color.FromRgb(0x08, 0x08, 0x08);
             Padding = insets.SafeAreaPadding;
             insets.SafeAreaChanged += (_, a) => Padding = a.SafeAreaPadding;
         }
