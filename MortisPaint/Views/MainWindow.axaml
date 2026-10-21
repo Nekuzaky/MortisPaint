@@ -1,0 +1,12 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="using:MortisPaint.Views"
+        x:Class="MortisPaint.Views.MainWindow"
+        Icon="/Assets/Icon.png"
+        Title="MortisPaint"
+        Width="1360" Height="860"
+        MinWidth="360" MinHeight="520"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource Paper}">
+    <views:MainView />
+</Window>

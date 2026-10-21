@@ -1,0 +1,266 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="MortisPaint.App"
+             RequestedThemeVariant="Light">
+
+    <!--
+        Thème « Carnet papier » — repris de la variante claire du design system Mortis :
+        papier crème, encre graphite, un seul rouge (Ruban) pour la sélection et l'action principale.
+        Rayons 4 / 6 / 10 px, filets fins, une seule ombre douce pour ce qui flotte. Pas de dégradé, pas de lueur.
+    -->
+    <Application.Resources>
+        <!-- Papier -->
+        <Color x:Key="PaperColor">#F6F5F2</Color>
+        <SolidColorBrush x:Key="Paper" Color="#F6F5F2" />
+        <SolidColorBrush x:Key="Sheet" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="Desk" Color="#E7E5E0" />
+        <SolidColorBrush x:Key="Hover" Color="#EFEEEA" />
+        <SolidColorBrush x:Key="Pressed" Color="#E7E5E0" />
+        <SolidColorBrush x:Key="Rule" Color="#E4E2DD" />
+        <SolidColorBrush x:Key="RuleStrong" Color="#CFCCC5" />
+        <!-- Encre -->
+        <SolidColorBrush x:Key="Ink" Color="#2A2C30" />
+        <SolidColorBrush x:Key="InkStrong" Color="#121315" />
+        <SolidColorBrush x:Key="InkSoft" Color="#5E626A" />
+        <SolidColorBrush x:Key="InkFaint" Color="#8A8D94" />
+        <!-- Ruban -->
+        <SolidColorBrush x:Key="Ribbon" Color="#B4321E" />
+        <SolidColorBrush x:Key="RibbonInk" Color="#A52D1B" />
+        <SolidColorBrush x:Key="RibbonSoft" Color="#F5E6E2" />
+        <SolidColorBrush x:Key="RibbonDeep" Color="#962817" />
+
+        <FontFamily x:Key="TitleFont">fonts:Mortis#Schibsted Grotesk</FontFamily>
+        <FontFamily x:Key="MonoFont">fonts:Mortis#Atkinson Hyperlegible Mono</FontFamily>
+
+        <!-- Surcharges du thème Fluent -->
+        <Color x:Key="SystemAccentColor">#B4321E</Color>
+        <Color x:Key="SystemAccentColorDark1">#A52D1B</Color>
+        <Color x:Key="SystemAccentColorDark2">#962817</Color>
+        <Color x:Key="SystemAccentColorLight1">#C24A36</Color>
+        <Color x:Key="SystemAccentColorLight2">#D06A58</Color>
+        <CornerRadius x:Key="ControlCornerRadius">6</CornerRadius>
+        <CornerRadius x:Key="OverlayCornerRadius">10</CornerRadius>
+        <SolidColorBrush x:Key="SliderTrackValueFill" Color="#2A2C30" />
+        <SolidColorBrush x:Key="SliderTrackValueFillPointerOver" Color="#121315" />
+        <SolidColorBrush x:Key="SliderTrackValueFillPressed" Color="#121315" />
+        <SolidColorBrush x:Key="SliderThumbBackground" Color="#2A2C30" />
+        <SolidColorBrush x:Key="SliderThumbBackgroundPointerOver" Color="#121315" />
+        <SolidColorBrush x:Key="SliderThumbBackgroundPressed" Color="#B4321E" />
+        <SolidColorBrush x:Key="SliderTrackFill" Color="#CFCCC5" />
+        <SolidColorBrush x:Key="SliderTrackFillPointerOver" Color="#B9B5AD" />
+        <SolidColorBrush x:Key="SliderTrackFillPressed" Color="#B9B5AD" />
+        <SolidColorBrush x:Key="ButtonBackground" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#EFEEEA" />
+        <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#E7E5E0" />
+        <SolidColorBrush x:Key="ButtonBorderBrush" Color="#CFCCC5" />
+        <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="#B9B5AD" />
+        <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="#B9B5AD" />
+        <SolidColorBrush x:Key="ButtonForeground" Color="#2A2C30" />
+        <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="#121315" />
+        <SolidColorBrush x:Key="ButtonForegroundPressed" Color="#121315" />
+        <SolidColorBrush x:Key="TextControlBorderBrush" Color="#CFCCC5" />
+        <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="#B9B5AD" />
+        <SolidColorBrush x:Key="TextControlBackground" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="ComboBoxBackground" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="#EFEEEA" />
+        <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="#CFCCC5" />
+        <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#CFCCC5" />
+        <SolidColorBrush x:Key="MenuFlyoutItemBackgroundPointerOver" Color="#EFEEEA" />
+        <SolidColorBrush x:Key="MenuFlyoutSubItemBackgroundPointerOver" Color="#EFEEEA" />
+        <SolidColorBrush x:Key="MenuFlyoutSubItemBackgroundSubMenuOpened" Color="#EFEEEA" />
+    </Application.Resources>
+
+    <Application.Styles>
+        <FluentTheme />
+
+        <Style Selector="TextBlock.title">
+            <Setter Property="FontFamily" Value="{StaticResource TitleFont}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource InkStrong}" />
+        </Style>
+        <Style Selector="TextBlock.mono">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        </Style>
+        <Style Selector="TextBlock.section">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource Ink}" />
+            <Setter Property="Margin" Value="0,12,0,4" />
+        </Style>
+        <Style Selector="TextBlock.dim">
+            <Setter Property="Foreground" Value="{StaticResource InkSoft}" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+        <Style Selector="TextBlock.faint">
+            <Setter Property="Foreground" Value="{StaticResource InkFaint}" />
+            <Setter Property="FontSize" Value="11" />
+        </Style>
+
+        <!-- Bouton icône (outils, barres) -->
+        <Style Selector="Button.icon, ToggleButton.icon">
+            <Setter Property="Width" Value="40" />
+            <Setter Property="Height" Value="40" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{StaticResource Ink}" />
+        </Style>
+        <Style Selector="Button.icon /template/ ContentPresenter, ToggleButton.icon /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Button.icon:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource Hover}" />
+            <Setter Property="Foreground" Value="{StaticResource InkStrong}" />
+        </Style>
+        <Style Selector="Button.icon:pressed /template/ ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource Pressed}" />
+        </Style>
+        <Style Selector="Button.icon:disabled /template/ ContentPresenter">
+            <Setter Property="Opacity" Value="0.3" />
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Button.icon.active /template/ ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource RibbonSoft}" />
+            <Setter Property="Foreground" Value="{StaticResource Ribbon}" />
+        </Style>
+        <Style Selector="Button.small">
+            <Setter Property="Width" Value="34" />
+            <Setter Property="Height" Value="34" />
+        </Style>
+
+        <!-- Onglets texte soulignés -->
+        <Style Selector="ToggleButton.tab">
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0,0,0,2" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="CornerRadius" Value="0" />
+            <Setter Property="Padding" Value="4,10,4,8" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource InkFaint}" />
+        </Style>
+        <Style Selector="ToggleButton.tab /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ToggleButton.tab:pointerover /template/ ContentPresenter">
+            <Setter Property="Foreground" Value="{StaticResource Ink}" />
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ToggleButton.tab:checked /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{StaticResource Ribbon}" />
+            <Setter Property="Foreground" Value="{StaticResource InkStrong}" />
+        </Style>
+
+        <!-- Puces segmentées -->
+        <Style Selector="ToggleButton.chip, Button.chip">
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="10,5" />
+            <Setter Property="Margin" Value="2" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="MinHeight" Value="30" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="{StaticResource RuleStrong}" />
+            <Setter Property="Background" Value="{StaticResource Sheet}" />
+            <Setter Property="Foreground" Value="{StaticResource Ink}" />
+        </Style>
+        <Style Selector="ToggleButton.chip:checked /template/ ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource RibbonSoft}" />
+            <Setter Property="BorderBrush" Value="{StaticResource Ribbon}" />
+            <Setter Property="Foreground" Value="{StaticResource RibbonInk}" />
+        </Style>
+        <Style Selector="ToggleButton.chip:checked:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#F0DAD4" />
+            <Setter Property="BorderBrush" Value="{StaticResource Ribbon}" />
+            <Setter Property="Foreground" Value="{StaticResource RibbonInk}" />
+        </Style>
+        <Style Selector="ToggleButton.chip:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource Hover}" />
+        </Style>
+
+        <!-- Action principale -->
+        <Style Selector="Button.accent">
+            <Setter Property="Background" Value="{StaticResource Ribbon}" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="14,8" />
+        </Style>
+        <Style Selector="Button.accent /template/ ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource Ribbon}" />
+            <Setter Property="Foreground" Value="White" />
+        </Style>
+        <Style Selector="Button.accent:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource RibbonInk}" />
+            <Setter Property="Foreground" Value="White" />
+        </Style>
+        <Style Selector="Button.accent:pressed /template/ ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource RibbonDeep}" />
+        </Style>
+        <Style Selector="Button.accent:disabled /template/ ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource RuleStrong}" />
+        </Style>
+
+        <!-- Bouton plat (texte seul) -->
+        <Style Selector="Button.flat">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="6" />
+        </Style>
+        <Style Selector="Button.flat /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Button.flat:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource Hover}" />
+        </Style>
+
+        <!-- Ligne de liste (calques, pinceaux) -->
+        <Style Selector="Button.row">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Padding" Value="8,6" />
+        </Style>
+        <Style Selector="Button.row /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Button.row:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource Hover}" />
+        </Style>
+        <Style Selector="Button.row.selected /template/ ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource RibbonSoft}" />
+        </Style>
+
+        <!-- Éléments flottants : papier blanc, filet, une ombre douce -->
+        <Style Selector="Border.float">
+            <Setter Property="Background" Value="{StaticResource Sheet}" />
+            <Setter Property="BorderBrush" Value="{StaticResource RuleStrong}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="BoxShadow" Value="0 6 18 0 #1F2A2C30" />
+        </Style>
+
+        <Style Selector="Slider">
+            <Setter Property="MinHeight" Value="28" />
+        </Style>
+        <Style Selector="Slider:vertical">
+            <Setter Property="MinWidth" Value="28" />
+        </Style>
+        <Style Selector="TextBox">
+            <Setter Property="CornerRadius" Value="6" />
+        </Style>
+        <Style Selector="ComboBox">
+            <Setter Property="CornerRadius" Value="6" />
+        </Style>
+    </Application.Styles>
+</Application>

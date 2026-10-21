@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Trait d'encre laissé par la plume -->
+    <path
+        android:strokeColor="#121315"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M45.5,68.5 C52,63 58,72 68,66" />
+    <!-- Plume (icône Nib, grille 24, pivot au centre) -->
+    <group
+        android:pivotX="12"
+        android:pivotY="12"
+        android:scaleX="1.6667"
+        android:scaleY="1.6667"
+        android:rotation="215"
+        android:translateX="42"
+        android:translateY="44">
+        <path
+            android:strokeColor="#121315"
+            android:strokeWidth="1.7"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M12,3 L18,10 L14.5,20 H9.5 L6,10 Z M12,3 V12 M12,12 A1.4,1.4 0 1,0 12,14.8 A1.4,1.4 0 1,0 12,12 M9.5,20 V21.5 H14.5 V20" />
+    </group>
+</vector>

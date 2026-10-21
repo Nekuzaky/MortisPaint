@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="MortisPaint.Android/MortisPaint.Android.csproj">
+    <Deploy />
+  </Project>
+  <Project Path="MortisPaint.Desktop/MortisPaint.Desktop.csproj" />
+  <Project Path="MortisPaint/MortisPaint.csproj" />
+</Solution>

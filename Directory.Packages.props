@@ -1,0 +1,17 @@
+<Project>
+    <!-- https://learn.microsoft.com/en-us/nuget/consume-packages/central-package-management -->
+    <PropertyGroup>
+        <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    </PropertyGroup>
+    <ItemGroup>
+        <!-- Avalonia packages : garder les versions synchronisées -->
+        <PackageVersion Include="Avalonia" Version="12.1.4" />
+        <PackageVersion Include="Avalonia.Skia" Version="12.1.4" />
+        <PackageVersion Include="Avalonia.Themes.Fluent" Version="12.1.4" />
+        <PackageVersion Include="Avalonia.Desktop" Version="12.1.4" />
+        <PackageVersion Include="Avalonia.Android" Version="12.1.4" />
+        <PackageVersion Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.3" />
+
+        <PackageVersion Include="Xamarin.AndroidX.Core.SplashScreen" Version="1.0.1.15" />
+    </ItemGroup>
+</Project>

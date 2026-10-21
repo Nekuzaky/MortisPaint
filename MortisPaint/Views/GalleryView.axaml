@@ -1,0 +1,82 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:MortisPaint.Controls"
+             x:Class="MortisPaint.Views.GalleryView">
+    <Grid RowDefinitions="Auto,*">
+        <Border Background="{StaticResource Paper}" Padding="16,10" BorderBrush="{StaticResource Rule}" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="Auto,*,Auto">
+                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <c:LineIcon Data="{x:Static c:Icons.Nib}" Width="26" Height="26" StrokeWidth="1.8" Foreground="{StaticResource InkStrong}" />
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="MortisPaint" Classes="title" FontSize="20" FontWeight="Bold" />
+                        <TextBlock x:Name="CountText" Text="Carnet" Classes="dim" />
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Button x:Name="ImportButton" ToolTip.Tip="Ouvrir un projet, un PSD (ibisPaint, Photoshop) ou une image">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <c:LineIcon Data="{x:Static c:Icons.Folder}" Width="18" Height="18" />
+                            <TextBlock x:Name="ImportButtonText" Text="Ouvrir" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="NewButton" Classes="accent">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <c:LineIcon Data="{x:Static c:Icons.Plus}" Width="16" Height="16" StrokeWidth="2" Foreground="White" />
+                            <TextBlock x:Name="NewButtonText" Text="Nouvelle toile" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <ScrollViewer Grid.Row="1" x:Name="Scroller" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="12,14">
+                <WrapPanel x:Name="CardsPanel" />
+                <StackPanel x:Name="EmptyState" Spacing="10" Margin="24,90,24,0" HorizontalAlignment="Center" MaxWidth="360" IsVisible="False">
+                    <c:LineIcon Data="{x:Static c:Icons.Nib}" Width="56" Height="56" StrokeWidth="1.2" Foreground="{StaticResource InkFaint}" HorizontalAlignment="Center" />
+                    <TextBlock Text="Le carnet est vide" Classes="title" FontSize="20" HorizontalAlignment="Center" />
+                    <TextBlock Text="Crée une toile, ou ouvre un PSD exporté d'ibisPaint pour continuer un dessin ici."
+                               Foreground="{StaticResource InkSoft}" FontSize="14" TextWrapping="Wrap" TextAlignment="Center" />
+                    <Button x:Name="EmptyNewButton" Classes="accent" Content="Nouvelle toile" HorizontalAlignment="Center" Margin="0,6,0,0" />
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Border x:Name="NewCanvasLayer" Grid.RowSpan="2" IsVisible="False" Background="#592A2C30">
+            <Border Classes="float" Padding="20,18" MaxWidth="560" Margin="14" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Nouvelle toile" Classes="title" FontSize="20" />
+                        <TextBlock Text="Format" Classes="section" />
+                        <WrapPanel x:Name="PresetPanel" />
+                        <TextBlock Text="Taille en pixels" Classes="section" />
+                        <Grid ColumnDefinitions="*,Auto,*,Auto">
+                            <TextBox x:Name="WidthBox" PlaceholderText="Largeur" FontFamily="{StaticResource MonoFont}" />
+                            <TextBlock Grid.Column="1" Text="×" Margin="10,0" VerticalAlignment="Center" FontSize="16" Foreground="{StaticResource InkSoft}" />
+                            <TextBox Grid.Column="2" x:Name="HeightBox" PlaceholderText="Hauteur" FontFamily="{StaticResource MonoFont}" />
+                            <Button Grid.Column="3" x:Name="SwapButton" Classes="icon" Margin="6,0,0,0" ToolTip.Tip="Paysage / portrait">
+                                <c:LineIcon Data="{x:Static c:Icons.Swap}" />
+                            </Button>
+                        </Grid>
+                        <TextBlock Text="Nom" Classes="section" />
+                        <TextBox x:Name="NameBox" PlaceholderText="Nom de l'œuvre" />
+                        <TextBlock x:Name="NewInfo" Classes="dim" TextWrapping="Wrap" Margin="0,4,0,0" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,10,0,0">
+                            <Button x:Name="NewCancel" Content="Annuler" />
+                            <Button x:Name="NewCreate" Classes="accent" Content="Créer la toile" />
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Border>
+
+        <Border x:Name="BusyLayer" Grid.RowSpan="2" IsVisible="False" Background="#40F6F5F2">
+            <Border Classes="float" Padding="20,16" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <StackPanel Spacing="10">
+                    <ProgressBar IsIndeterminate="True" Width="180" />
+                    <TextBlock x:Name="BusyText" Text="Chargement…" HorizontalAlignment="Center" />
+                </StackPanel>
+            </Border>
+        </Border>
+    </Grid>
+</UserControl>
