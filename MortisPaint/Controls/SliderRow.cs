@@ -73,11 +73,13 @@ public static class BrushPreview
             b.Hardness = Math.Min(b.Hardness, 0.4f);
         }
 
+        // Comme sur la toile : avec « Pression → opacité », le tampon porte l'opacité plafonnée en gris.
+        using var dabs = new DabRenderer(b, new SKColor(0xD1, 0xD1, 0xD1), new List<SKMatrix> { SKMatrix.Identity }, capOpacity: true);
+        using var bufferFilter = dabs.CreateBufferFilter();
         using (var c = new SKCanvas(bmp))
-        using (var layerPaint = new SKPaint { Color = SKColors.White.WithAlpha((byte)(Math.Clamp(b.Opacity, 0.15f, 1f) * 255)) })
+        using (var layerPaint = new SKPaint { Color = SKColors.White.WithAlpha((byte)(Math.Clamp(b.Opacity, 0.15f, 1f) * 255)), ColorFilter = bufferFilter })
         {
             c.SaveLayer(layerPaint);
-            using var dabs = new DabRenderer(b, new SKColor(0xD1, 0xD1, 0xD1), new List<SKMatrix> { SKMatrix.Identity });
             var path = new StrokePath(b, (x, y, p, a, along) => dabs.Dab(c, x, y, p, a, along));
             for (int i = 0; i <= 80; i++)
             {

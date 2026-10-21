@@ -185,7 +185,7 @@ public partial class EditorView
             if (bmp == null) return;
             var id = BrushTips.Create(bmp);
             int n = _state.Brushes.Count(b => b.IsCustom) + 1;
-            var brush = EditorState.CreateImageBrush($"Image {n}", id);
+            var brush = BrushPresets.CreateImageBrush($"Image {n}", id);
             if (_state.Tool is not (ToolKind.Brush or ToolKind.Shape)) _state.SetTool(ToolKind.Brush);
             _state.AddCustomBrush(brush);
             ShowToast("Pinceau créé : clic droit dessus pour le supprimer");

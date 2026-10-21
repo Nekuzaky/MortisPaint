@@ -236,6 +236,10 @@ public partial class EditorView : UserControl
         FlushOpacityEdit();
         var doc = _engine.Document;
         if (!doc.IsDirty && doc.ProjectPath != null) return;
+        // Le filtre et la transformation travaillent directement dans le calque : on enregistre
+        // ses pixels d'origine, puis on réaffiche l'aperçu. Le texte n'est qu'un aperçu superposé.
+        var transform = Canvas.Transform;
+        transform?.ShowOriginal();
         try
         {
             GalleryStore.Save(_engine);
@@ -243,6 +247,10 @@ public partial class EditorView : UserControl
         catch (Exception ex)
         {
             ShowToast("Erreur d'enregistrement : " + ex.Message);
+        }
+        finally
+        {
+            transform?.ShowTransformed();
         }
     }
 

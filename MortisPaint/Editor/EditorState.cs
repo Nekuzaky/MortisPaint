@@ -131,30 +131,13 @@ public sealed class EditorState
     /// <summary>Signale une modification des réglages du pinceau courant.</summary>
     public void NotifyBrushEdited() => BrushEdited?.Invoke();
 
-    /// <summary>Réglages de départ d'un pinceau à pointe image.</summary>
-    public static BrushSettings CreateImageBrush(string name, string tipId) => new()
-    {
-        Name = name,
-        Shape = BrushShape.Image,
-        TipId = tipId,
-        Size = 60,
-        Hardness = 1,
-        Spacing = 0.3f,
-        PressureSize = true,
-        MinSize = 0.4f,
-        Stabilizer = 1,
-        RotationJitter = 0,
-    };
-
     public void ResetCurrentBrush()
     {
         int i = CurrentBrushIndex;
         if (CurrentBrush is { IsCustom: true, TipId: { } tip } custom)
         {
             // Pinceau image : on garde son nom et sa pointe, on remet ses réglages de départ.
-            var fresh = CreateImageBrush(custom.Name, tip);
-            fresh.IsCustom = true;
-            CurrentBrushList[i] = fresh;
+            CurrentBrushList[i] = BrushPresets.CreateImageBrush(custom.Name, tip);
             SaveCustomBrushes();
             BrushChanged?.Invoke();
             return;
