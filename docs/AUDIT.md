@@ -4,6 +4,28 @@ Sept audits en lecture seule, un par zone fonctionnelle, sur la branche `feat/mo
 
 Gravité : **Bloquant** (plantage, perte de données, fonction inopérante) · **Majeur** (résultat faux, perte possible, gros coût) · **Mineur**.
 
+## Corrections (branche `fix/audit`)
+
+Tous les constats ci-dessous sont corrigés. Avant chaque correction, un test a reproduit le défaut sur le code d'origine ; après la correction, ce même test passe. Sur le code intégré, toutes les suites passent :
+
+| Suite | Contenu | Résultat |
+|---|---|---|
+| Harnais de l'interface (Avalonia.Headless) | scénario complet, glisser-déposer des calques, 9 tests des vues | tout passe |
+| Gestes de la toile | stylet et paume, pincements, outils au doigt, Maj, verrou | 83 scénarios |
+| Moteur de pinceau | symétrie, plafond d'opacité, espacement, flou, règle | 36 vérifications |
+| Calques | structure, rendu, annuler/rétablir, 6000 opérations aléatoires | 100 vérifications |
+| Filtres et texte | verrou alpha, bords, aperçu asynchrone, polices de repli | 45 vérifications |
+| Animation et timelapse | GIF, palette, cadence, plafond, miniatures | tout passe |
+| Fichiers | PSD piégés (10 000 fichiers abîmés), aller-retours, enregistrement atomique, EXIF, galerie | tout passe |
+
+Les 19 PSD de test de psd-tools donnent un rendu identique, à l'octet près, à celui d'avant les corrections.
+
+Restent à savoir :
+- **Clavier Android.** La marge qui garde le panneau Texte visible au-dessus du clavier n'a pas été essayée sur un appareil.
+- **Groupe « pass-through » à moins de 100 %.** Quand on le fusionne, le résultat est approché : l'opacité du dossier est appliquée à chaque calque.
+- **Rotation de 90°.** Elle remplace le document, donc elle vide l'historique (après confirmation). Le demi-tour, lui, passe par l'historique.
+- **PSD aplati RVB + 1 canal sans ressource 1053.** Il est lu comme transparent, comme le fait psd-tools. psd-tools n'étant pas installé, ces règles ont été appliquées de mémoire.
+
 ## Bloquants (5)
 
 | # | Zone | Défaut | Où | Statut |
