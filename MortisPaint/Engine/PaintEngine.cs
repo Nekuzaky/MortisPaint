@@ -88,7 +88,10 @@ public sealed partial class PaintEngine : IDisposable
     public void SetActive(int index)
     {
         if (index == Document.ActiveIndex) return;
+        var frame = CurrentFrame;
         Document.ActiveIndex = index;
+        // En animation, changer d'image change ce qui est affiché (image et pelures d'oignon).
+        if (CurrentFrame != frame) Invalidate(Document.Bounds);
         StructureChanged?.Invoke();
     }
 
@@ -170,57 +173,93 @@ public sealed partial class PaintEngine : IDisposable
         });
     }
 
+    /// <summary>
+    /// Vrai si le calque actif peut être fusionné avec celui du dessous : il faut un voisin du même dossier
+    /// (sinon on mélangerait deux dossiers, ou deux images en animation).
+    /// </summary>
+    public bool CanMergeDown
+    {
+        get
+        {
+            int i = Document.ActiveIndex;
+            return i > 0 && i < Document.Layers.Count && Document.Layers[i - 1].Folder == Document.Layers[i].Folder;
+        }
+    }
+
     public void MergeDown()
     {
+        if (!CanMergeDown) return;
         int i = Document.ActiveIndex;
-        if (i <= 0) return;
         var upper = Document.Layers[i];
         var lower = Document.Layers[i - 1];
-        var full = Document.Bounds;
-        var before = BitmapUtil.Copy(lower.Bitmap);
-        if (upper.Visible)
+        // Seule la zone non transparente du calque du haut change le calque du bas.
+        var rect = upper.Visible && upper.Opacity > 0f ? BitmapUtil.AlphaBounds(upper.Bitmap) : SKRectI.Empty;
+        var pixels = new List<PixelAction>();
+        if (!rect.IsEmpty)
         {
-            using var c = new SKCanvas(lower.Bitmap);
-            using var p = new SKPaint
+            var before = BitmapUtil.CopyRegion(lower.Bitmap, rect);
+            using (var c = new SKCanvas(lower.Bitmap))
+            using (var p = LayerPaint(upper))
             {
-                BlendMode = upper.Clipping ? SKBlendMode.SrcATop : upper.BlendMode.ToSkia(),
-                Color = SKColors.White.WithAlpha((byte)(upper.Opacity * 255)),
-            };
-            if (upper.Clipping && upper.BlendMode != LayerBlendMode.Normal)
-            {
-                // Mode de fusion + écrêtage : on applique le mode puis on masque par l'alpha de la base.
-                using var tmp = BitmapUtil.Copy(lower.Bitmap);
-                using (var tc = new SKCanvas(tmp))
-                using (var bp = new SKPaint { BlendMode = upper.BlendMode.ToSkia(), Color = p.Color })
+                if (upper.Clipping && !lower.Clipping)
                 {
-                    tc.DrawBitmap(upper.Bitmap, 0, 0, bp);
-                    using var mp = new SKPaint { BlendMode = SKBlendMode.DstIn };
-                    tc.DrawBitmap(lower.Bitmap, 0, 0, mp);
+                    // Écrêté sur le calque du bas : comme le compositeur, on masque d'abord par l'alpha
+                    // de la base, puis on fusionne avec le mode et l'opacité du calque.
+                    using var masked = BitmapUtil.Copy(upper.Bitmap);
+                    using (var mc = new SKCanvas(masked))
+                    using (var mp = new SKPaint { BlendMode = SKBlendMode.DstIn })
+                        mc.DrawBitmap(lower.Bitmap, 0, 0, mp);
+                    c.DrawBitmap(masked, 0, 0, p);
                 }
-                using var src = new SKPaint { BlendMode = SKBlendMode.Src };
-                c.DrawBitmap(tmp, 0, 0, src);
+                else
+                {
+                    // Calque non écrêté, ou deux calques écrêtés sur la même base (le résultat le reste).
+                    c.DrawBitmap(upper.Bitmap, 0, 0, p);
+                }
             }
-            else
-            {
-                c.DrawBitmap(upper.Bitmap, 0, 0, p);
-            }
+            var after = BitmapUtil.CopyRegion(lower.Bitmap, rect);
+            lower.Touch();
+            pixels.Add(new PixelAction("Fusion", lower, rect, before, after));
         }
-        var after = BitmapUtil.Copy(lower.Bitmap);
-        lower.Touch();
-        var pixel = new PixelAction("Fusion", lower, full, before, after);
         // Les pixels sont déjà modifiés : l'action structurelle enregistre l'état avant/après.
         var stBefore = DocState.Capture(Document);
         Document.Layers.RemoveAt(i);
         Document.ActiveIndex = i - 1;
         var stAfter = DocState.Capture(Document);
-        History.Push(new StructureAction("Fusionner vers le bas", stBefore, stAfter, new List<PixelAction> { pixel }));
+        History.Push(new StructureAction("Fusionner vers le bas", stBefore, stAfter, pixels));
         NotifyStructure();
         NotifyLayerPixels(lower);
     }
 
-    /// <summary>Aplatit tous les calques visibles en un seul.</summary>
+    /// <summary>Peinture d'un calque (mode et opacité), arrondie comme dans le compositeur.</summary>
+    static SKPaint LayerPaint(Layer l) => new()
+    {
+        BlendMode = l.BlendMode.ToSkia(),
+        Color = SKColors.White.WithAlpha((byte)(Math.Clamp(l.Opacity, 0f, 1f) * 255f + 0.5f)),
+    };
+
+    /// <summary>
+    /// Aplatit tous les calques visibles en un seul. En animation, seule l'image courante est aplatie,
+    /// dans son dossier : les autres images et les calques de fond restent.
+    /// </summary>
     public void FlattenAll()
     {
+        var frame = CurrentFrame;
+        if (frame != null)
+        {
+            var (s, e) = Document.FolderRange(frame);
+            if (e <= s) return;
+            var layer = new Layer(Width, Height, "Image aplatie") { Folder = frame };
+            // Intérieur de l'image, sans le mode ni l'opacité du dossier (qui s'appliquent encore au résultat).
+            using (var c = new SKCanvas(layer.Bitmap)) Compositor.DrawSubset(c, Document.Layers, frame, null);
+            Structure("Aplatir l'image", () =>
+            {
+                Document.Layers.RemoveRange(s, e - s);
+                Document.Layers.Insert(s, layer);
+                Document.ActiveIndex = s;
+            });
+            return;
+        }
         var flat = new Layer(Compositor.Flatten(Document, includePaper: false), "Image aplatie");
         Structure("Aplatir l'image", () =>
         {
@@ -290,36 +329,68 @@ public sealed partial class PaintEngine : IDisposable
         });
     }
 
-    static void Flip(SKCanvas c, SKBitmap src, int w, int h, bool horizontal)
+    /// <summary>Retourne un bitmap sur place : permutation exacte des pixels (4 octets, quel que soit l'ordre des canaux).</summary>
+    static void Flip(SKBitmap bmp, bool horizontal)
     {
-        using var copy = BitmapUtil.Copy(src);
-        c.Clear(SKColors.Transparent);
-        if (horizontal) c.Scale(-1, 1, w / 2f, 0);
-        else c.Scale(1, -1, 0, h / 2f);
-        c.DrawBitmap(copy, 0, 0);
+        int w = bmp.Width, h = bmp.Height, row = bmp.RowBytes, len = w * 4;
+        unsafe
+        {
+            byte* p = (byte*)bmp.GetPixels();
+            if (horizontal)
+            {
+                for (int y = 0; y < h; y++)
+                {
+                    uint* line = (uint*)(p + y * row);
+                    for (int a = 0, b = w - 1; a < b; a++, b--)
+                        (line[a], line[b]) = (line[b], line[a]);
+                }
+                return;
+            }
+            var tmp = new byte[len];
+            fixed (byte* t = tmp)
+            {
+                for (int a = 0, b = h - 1; a < b; a++, b--)
+                {
+                    Buffer.MemoryCopy(p + a * row, t, len, len);
+                    Buffer.MemoryCopy(p + b * row, p + a * row, len, len);
+                    Buffer.MemoryCopy(t, p + b * row, len, len);
+                }
+            }
+        }
+    }
+
+    /// <summary>Applique une opération réversible à des calques entiers ; l'historique rejouera l'inverse.</summary>
+    void Reversible(string name, List<Layer> layers, Action<Layer> redo, Action<Layer> undo)
+    {
+        var action = new ReversibleAction(name, layers, redo, undo);
+        action.Redo(this);
+        History.Push(action);
     }
 
     public void FlipLayer(bool horizontal)
     {
-        var layer = ActiveLayer;
-        PixelEdit(horizontal ? "Retourner horizontalement" : "Retourner verticalement", layer, Document.Bounds,
-            c => Flip(c, layer.Bitmap, Width, Height, horizontal));
+        Action<Layer> flip = l => Flip(l.Bitmap, horizontal);
+        Reversible(horizontal ? "Retourner horizontalement" : "Retourner verticalement", new List<Layer> { ActiveLayer }, flip, flip);
     }
 
     public void FlipCanvas(bool horizontal)
     {
-        var actions = new List<IHistoryAction>();
-        foreach (var layer in Document.Layers)
+        Action<Layer> flip = l => Flip(l.Bitmap, horizontal);
+        Reversible("Retourner la toile", new List<Layer>(Document.Layers), flip, flip);
+    }
+
+    /// <summary>
+    /// Pivote la toile d'un demi-tour sur place (la taille ne change pas) : contrairement à
+    /// <see cref="CanvasOps.Rotate"/>, l'historique est conservé et l'opération s'annule.
+    /// </summary>
+    public void RotateCanvas180()
+    {
+        Action<Layer> turn = l =>
         {
-            var before = BitmapUtil.Copy(layer.Bitmap);
-            using (var c = new SKCanvas(layer.Bitmap)) Flip(c, layer.Bitmap, Width, Height, horizontal);
-            var after = BitmapUtil.Copy(layer.Bitmap);
-            layer.Touch();
-            actions.Add(new PixelAction("Retourner", layer, Document.Bounds, before, after));
-            NotifyLayerPixels(layer);
-        }
-        History.Push(new CompositeAction("Retourner la toile", actions));
-        Invalidate(Document.Bounds);
+            Flip(l.Bitmap, true);
+            Flip(l.Bitmap, false);
+        };
+        Reversible("Pivoter de 180°", new List<Layer>(Document.Layers), turn, turn);
     }
 
     /// <summary>Ajoute une image comme nouveau calque, centrée et réduite si nécessaire.</summary>
@@ -342,7 +413,8 @@ public sealed partial class PaintEngine : IDisposable
     {
         if (x < 0 || y < 0 || x >= Width || y >= Height) return;
         var layer = ActiveLayer;
-        SKBitmap? flat = sampleAll ? Compositor.Flatten(Document, includePaper: true) : null;
+        // « Toile » en animation : l'image courante seulement, sans pelures d'oignon.
+        SKBitmap? flat = sampleAll ? Compositor.Flatten(Document, includePaper: true, CurrentFrameFilter(withOnion: false)) : null;
         byte[]? mask;
         SKRectI bounds;
         try
@@ -380,7 +452,7 @@ public sealed partial class PaintEngine : IDisposable
                 c.Clear(SKColors.Transparent);
                 c.Translate(-x, -y);
                 if (Document.PaperVisible) c.DrawColor(Document.PaperColor, SKBlendMode.Src);
-                Compositor.DrawLayers(c, Document.Layers, null);
+                Compositor.DrawLayers(c, Document.Layers, null, CurrentFrameFilter(withOnion: false));
             }
             col = bmp.GetPixel(0, 0);
         }
@@ -394,7 +466,10 @@ public sealed partial class PaintEngine : IDisposable
 
     public SKBitmap RenderThumbnail(int maxSize)
     {
-        using var flat = Compositor.Flatten(Document, includePaper: true);
+        // En animation, la miniature montre la première image (et les fonds), pas toutes les images superposées.
+        var frames = Document.AnimationEnabled ? Document.Frames() : null;
+        var filter = frames is { Count: > 0 } ? new FrameFilter { Frame = frames[0] } : null;
+        using var flat = Compositor.Flatten(Document, includePaper: true, filter);
         float s = MathF.Min(1f, maxSize / (float)Math.Max(Width, Height));
         return BitmapUtil.Scaled(flat, Math.Max(1, (int)(Width * s)), Math.Max(1, (int)(Height * s)));
     }

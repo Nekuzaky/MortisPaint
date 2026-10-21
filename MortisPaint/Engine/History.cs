@@ -79,7 +79,8 @@ public sealed class DocState
         d.Layers.Clear();
         d.Layers.AddRange(Layers);
         for (int i = 0; i < Layers.Count; i++) Layers[i].SetProps(Props[i]);
-        foreach (var (f, p) in Folders) f.SetProps(p);
+        // Replié / déplié relève de l'interface : annuler ne doit pas le changer.
+        foreach (var (f, p) in Folders) f.SetProps(p with { Expanded = f.Expanded });
         d.ActiveIndex = Active;
         d.PaperVisible = PaperVisible;
         d.PaperColor = PaperColor;
@@ -123,6 +124,45 @@ public sealed class StructureAction : IHistoryAction
     {
         foreach (var p in _pixels) p.Dispose();
     }
+}
+
+/// <summary>
+/// Opération exactement réversible sur des calques entiers (retourner, demi-tour) : l'historique rejoue
+/// l'opération inverse au lieu de garder deux copies des pixels de chaque calque.
+/// </summary>
+public sealed class ReversibleAction : IHistoryAction
+{
+    readonly List<Layer> _layers;
+    readonly Action<Layer> _redo, _undo;
+
+    public ReversibleAction(string name, List<Layer> layers, Action<Layer> redo, Action<Layer> undo)
+    {
+        Name = name;
+        _layers = layers;
+        _redo = redo;
+        _undo = undo;
+    }
+
+    public string Name { get; }
+    public long Bytes => 64 + 8L * _layers.Count;
+    public IEnumerable<Layer> ReferencedLayers => _layers;
+
+    public void Undo(PaintEngine e) => Apply(e, _undo);
+    public void Redo(PaintEngine e) => Apply(e, _redo);
+
+    void Apply(PaintEngine e, Action<Layer> op)
+    {
+        foreach (var l in _layers)
+        {
+            if (l.IsDisposed) continue;
+            op(l);
+            l.Touch();
+            e.NotifyLayerPixels(l);
+        }
+        e.Invalidate(e.Document.Bounds);
+    }
+
+    public void Dispose() { }
 }
 
 public sealed class CompositeAction : IHistoryAction
@@ -174,17 +214,39 @@ public sealed class History : IDisposable
 
     public event Action? Changed;
 
+    /// <summary>
+    /// Mémoire réellement retenue par l'historique : copies de pixels des actions, plus les calques
+    /// sortis du document (supprimés, fusionnés...) que les actions gardent en vie, comptés une fois.
+    /// </summary>
+    public long RetainedBytes
+    {
+        get
+        {
+            var inDoc = new HashSet<Layer>(_engine.Document.Layers);
+            var kept = new HashSet<Layer>();
+            long total = 0;
+            foreach (var a in _undo.Concat(_redo))
+            {
+                total += a.Bytes;
+                foreach (var l in a.ReferencedLayers)
+                    if (!l.IsDisposed && !inDoc.Contains(l) && kept.Add(l)) total += l.Bitmap.ByteCount;
+            }
+            return total;
+        }
+    }
+
     public void Push(IHistoryAction action)
     {
         var dropped = new List<IHistoryAction>(_redo);
         _redo.Clear();
         _undo.Add(action);
-        long total = _undo.Sum(a => a.Bytes);
+        long total = RetainedBytes;
         while (_undo.Count > 1 && (_undo.Count > MaxSteps || total > MaxBytes))
         {
-            total -= _undo[0].Bytes;
             dropped.Add(_undo[0]);
             _undo.RemoveAt(0);
+            // Recalcul complet : un calque supprimé n'est libéré que si plus aucune action ne le garde.
+            total = RetainedBytes;
         }
         Release(dropped);
         _engine.Document.IsDirty = true;

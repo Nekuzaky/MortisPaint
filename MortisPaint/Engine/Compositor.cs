@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using SkiaSharp;
 
@@ -40,6 +41,25 @@ public static class Compositor
         DrawRange(c, layers, 0, layers.Count, null, preview, frames);
     }
 
+    /// <summary>
+    /// Compose l'intérieur d'un dossier (ou de la racine), sans le mode ni l'opacité de ce dossier,
+    /// en ne dessinant que les calques retenus par <paramref name="include"/> (tous si null).
+    /// Les calques écartés restent des bases d'écrêtage : un calque écrêté retenu reste masqué par sa base.
+    /// Sert aux fusions et à l'aplatissement d'une image.
+    /// </summary>
+    internal static void DrawSubset(SKCanvas c, IReadOnlyList<Layer> layers, LayerFolder? level, Func<Layer, bool>? include)
+    {
+        int start = -1, end = -1;
+        for (int i = 0; i < layers.Count; i++)
+        {
+            if (!layers[i].IsIn(level)) continue;
+            if (start < 0) start = i;
+            end = i + 1;
+        }
+        if (start < 0) return;
+        DrawRange(c, layers, start, end, level, null, null, 1f, include);
+    }
+
     /// <summary>Unité de composition : un calque, ou un dossier entier (plage de calques).</summary>
     readonly record struct Unit(Layer? Layer, LayerFolder? Folder, int Start, int End);
 
@@ -74,8 +94,10 @@ public static class Compositor
         return units;
     }
 
+    /// <param name="inherited">Opacité héritée des dossiers « pass-through » englobants.</param>
+    /// <param name="include">Calques à dessiner (null = tous) ; les autres ne servent que de masque d'écrêtage.</param>
     static void DrawRange(SKCanvas c, IReadOnlyList<Layer> layers, int start, int end, LayerFolder? level,
-        ILayerPreview? preview, FrameFilter? frames)
+        ILayerPreview? preview, FrameFilter? frames, float inherited = 1f, Func<Layer, bool>? include = null)
     {
         var units = BuildUnits(layers, start, end, level);
         int i = 0;
@@ -106,29 +128,42 @@ public static class Compositor
 
             if (IsVisible(baseUnit))
             {
+                bool baseIncluded = Includes(layers, baseUnit, include);
                 bool hasClipped = false;
                 for (int k = i + 1; k < next; k++)
-                    if (IsVisible(units[k])) { hasClipped = true; break; }
+                    if (IsVisible(units[k]) && Includes(layers, units[k], include)) { hasClipped = true; break; }
 
-                using var basePaint = UnitPaint(baseUnit);
+                using var basePaint = UnitPaint(baseUnit, inherited);
                 if (!hasClipped)
                 {
-                    DrawUnit(c, layers, baseUnit, basePaint, preview);
+                    if (baseUnit.Folder is { PassThrough: true } pass)
+                    {
+                        // Dossier « pass-through » : ses calques se composent directement sur ce qui est dessous,
+                        // chacun avec l'opacité du dossier en plus de la sienne.
+                        if (baseIncluded)
+                            DrawRange(c, layers, baseUnit.Start, baseUnit.End, pass, preview, null, inherited * pass.Opacity, include);
+                    }
+                    else if (baseIncluded)
+                    {
+                        DrawUnit(c, layers, baseUnit, basePaint, preview, include);
+                    }
                 }
                 else
                 {
                     // Groupe d'écrêtage : base + calques écrêtés, puis fusion avec le mode de la base.
+                    // Un dossier « pass-through » qui sert de base est composé isolément (il faut son alpha).
                     SaveLayer(c, basePaint);
-                    DrawUnit(c, layers, baseUnit, null, preview);
+                    if (baseIncluded) DrawUnit(c, layers, baseUnit, null, preview, include);
                     using var maskPaint = new SKPaint { BlendMode = SKBlendMode.DstIn };
                     for (int k = i + 1; k < next; k++)
                     {
                         var u = units[k];
-                        if (!IsVisible(u)) continue;
-                        using var lp = UnitPaint(u) ?? new SKPaint();
+                        if (!IsVisible(u) || !Includes(layers, u, include)) continue;
+                        using var lp = UnitPaint(u, 1f) ?? new SKPaint();
                         c.SaveLayer(lp);
-                        DrawUnit(c, layers, u, null, preview);
-                        DrawUnit(c, layers, baseUnit, maskPaint, preview);
+                        DrawUnit(c, layers, u, null, preview, include);
+                        // Le masque est toujours la base entière, même si elle n'est pas retenue.
+                        DrawUnit(c, layers, baseUnit, maskPaint, preview, null);
                         c.Restore();
                     }
                     c.Restore();
@@ -142,10 +177,20 @@ public static class Compositor
         ? u.Layer.Visible && u.Layer.Opacity > 0f
         : u.Folder!.Visible && u.Folder.Opacity > 0f;
 
-    static SKPaint? UnitPaint(Unit u)
+    /// <summary>Vrai si l'unité contient au moins un calque retenu.</summary>
+    static bool Includes(IReadOnlyList<Layer> layers, Unit u, Func<Layer, bool>? include)
+    {
+        if (include == null) return true;
+        if (u.Layer != null) return include(u.Layer);
+        for (int k = u.Start; k < u.End; k++)
+            if (include(layers[k])) return true;
+        return false;
+    }
+
+    static SKPaint? UnitPaint(Unit u, float inherited)
     {
         var mode = u.Layer?.BlendMode ?? u.Folder!.BlendMode;
-        float opacity = u.Layer?.Opacity ?? u.Folder!.Opacity;
+        float opacity = (u.Layer?.Opacity ?? u.Folder!.Opacity) * inherited;
         if (mode == LayerBlendMode.Normal && opacity >= 0.999f) return null;
         return new SKPaint
         {
@@ -160,7 +205,8 @@ public static class Compositor
         else c.SaveLayer(paint);
     }
 
-    static void DrawUnit(SKCanvas c, IReadOnlyList<Layer> layers, Unit u, SKPaint? paint, ILayerPreview? preview)
+    static void DrawUnit(SKCanvas c, IReadOnlyList<Layer> layers, Unit u, SKPaint? paint, ILayerPreview? preview,
+        Func<Layer, bool>? include = null)
     {
         if (u.Layer != null)
         {
@@ -169,7 +215,7 @@ public static class Compositor
         }
         // Un dossier est composé isolément puis fusionné avec son mode et son opacité.
         SaveLayer(c, paint);
-        DrawRange(c, layers, u.Start, u.End, u.Folder, preview, null);
+        DrawRange(c, layers, u.Start, u.End, u.Folder, preview, null, 1f, include);
         c.Restore();
     }
 
