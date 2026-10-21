@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using SkiaSharp;
 
 namespace MortisPaint.Engine;
@@ -136,6 +137,73 @@ public static class BitmapUtil
         var info = Info(codec.Info.Width, codec.Info.Height);
         var bmp = SKBitmap.Decode(codec, info);
         return bmp == null ? null : Normalize(bmp);
+    }
+
+    /// <summary>
+    /// Décode une image dont la taille est imposée par le fichier qui la contient (calque d'un projet) :
+    /// une image plus grande que <paramref name="maxWidth"/>×<paramref name="maxHeight"/> est refusée avant toute allocation.
+    /// </summary>
+    public static SKBitmap? Decode(System.IO.Stream stream, int maxWidth, int maxHeight)
+    {
+        using var codec = SKCodec.Create(stream);
+        if (codec == null) return null;
+        if (codec.Info.Width > maxWidth || codec.Info.Height > maxHeight)
+            throw new InvalidDataException($"Image de {codec.Info.Width}×{codec.Info.Height} au lieu de {maxWidth}×{maxHeight} au plus.");
+        var bmp = SKBitmap.Decode(codec, Info(codec.Info.Width, codec.Info.Height));
+        return bmp == null ? null : Normalize(bmp);
+    }
+
+    /// <summary>
+    /// Décode une photo en appliquant son orientation EXIF (appareil tenu de côté, selfie retourné...),
+    /// pour qu'elle s'affiche comme dans la galerie du téléphone.
+    /// </summary>
+    public static SKBitmap? DecodeOriented(System.IO.Stream stream)
+    {
+        using var codec = SKCodec.Create(stream);
+        if (codec == null) return null;
+        int w = codec.Info.Width, h = codec.Info.Height;
+        var raw = SKBitmap.Decode(codec, Info(w, h));
+        if (raw == null) return null;
+        var bmp = Normalize(raw);
+        var origin = codec.EncodedOrigin;
+        if (origin == SKEncodedOrigin.TopLeft) return bmp;
+        // Matrice qui envoie l'image stockée sur l'image affichée (x' = ScaleX·x + SkewX·y + TransX).
+        bool swap = origin is SKEncodedOrigin.LeftTop or SKEncodedOrigin.RightTop or SKEncodedOrigin.RightBottom or SKEncodedOrigin.LeftBottom;
+        var m = origin switch
+        {
+            SKEncodedOrigin.TopRight => new SKMatrix(-1, 0, w, 0, 1, 0, 0, 0, 1),     // miroir horizontal
+            SKEncodedOrigin.BottomRight => new SKMatrix(-1, 0, w, 0, -1, h, 0, 0, 1), // demi-tour
+            SKEncodedOrigin.BottomLeft => new SKMatrix(1, 0, 0, 0, -1, h, 0, 0, 1),   // miroir vertical
+            SKEncodedOrigin.LeftTop => new SKMatrix(0, 1, 0, 1, 0, 0, 0, 0, 1),       // transposition
+            SKEncodedOrigin.RightTop => new SKMatrix(0, -1, h, 1, 0, 0, 0, 0, 1),     // quart de tour horaire
+            SKEncodedOrigin.RightBottom => new SKMatrix(0, -1, h, -1, 0, w, 0, 0, 1), // transposition inverse
+            SKEncodedOrigin.LeftBottom => new SKMatrix(0, 1, 0, -1, 0, w, 0, 0, 1),   // quart de tour antihoraire
+            _ => SKMatrix.Identity,
+        };
+        if (m.IsIdentity) return bmp;
+        var dst = new SKBitmap(Info(swap ? h : w, swap ? w : h));
+        dst.Erase(SKColors.Transparent);
+        using (var canvas = new SKCanvas(dst))
+        using (var paint = new SKPaint { BlendMode = SKBlendMode.Src })
+        {
+            canvas.SetMatrix(m);
+            canvas.DrawBitmap(bmp, 0, 0, paint);
+        }
+        bmp.Dispose();
+        return dst;
+    }
+
+    /// <summary>
+    /// Refuse un fichier dont les calques pleine toile demanderaient plus de la moitié de la mémoire de l'appareil :
+    /// quelques octets d'en-tête ne doivent pas pouvoir réclamer des gigaoctets.
+    /// </summary>
+    public static void EnsureLayersFit(long layers, int width, int height)
+    {
+        long need = layers * width * (long)height * 4;
+        long total = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+        if (total <= 0) total = 4L << 30;
+        if (need > total / 2)
+            throw new InvalidDataException($"Fichier trop lourd : {layers} calques de {width}×{height} demanderaient {need >> 20} Mo.");
     }
 
     static SKShader? _checker;
