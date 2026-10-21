@@ -46,7 +46,18 @@ public static class BrushTips
         for (int i = 3; i < rgba.Length; i += 4)
             if (rgba[i] < 250) { hasAlpha = true; break; }
 
-        // Masque : alpha de l'image si elle en a, sinon l'obscurité.
+        // Obscurité maximale de la partie visible : la nuance la plus sombre devient opaque,
+        // et une forme claire (PNG blanc sur transparent) garde son alpha tel quel.
+        int maxDark = 0;
+        if (hasAlpha)
+            for (int i = 0; i < w * h; i++)
+            {
+                if (rgba[i * 4 + 3] < 64) continue; // RVB des pixels transparents sans signification
+                int dk = 255 - (rgba[i * 4] * 299 + rgba[i * 4 + 1] * 587 + rgba[i * 4 + 2] * 114) / 1000;
+                if (dk > maxDark) maxDark = dk;
+            }
+
+        // Masque : alpha de l'image si elle en a (nuancé par l'obscurité relative), sinon l'obscurité.
         using var mask = new SKBitmap(new SKImageInfo(w, h, SKColorType.Rgba8888, SKAlphaType.Unpremul));
         unsafe
         {
@@ -55,7 +66,8 @@ public static class BrushTips
             {
                 byte r = rgba[i * 4], g = rgba[i * 4 + 1], b = rgba[i * 4 + 2], a = rgba[i * 4 + 3];
                 int dark = 255 - (r * 299 + g * 587 + b * 114) / 1000;
-                byte alpha = hasAlpha ? (byte)(a * Math.Max(dark, 64) / 255) : (byte)dark;
+                int shade = maxDark < 16 ? 255 : Math.Clamp(dark * 255 / maxDark, 64, 255);
+                byte alpha = hasAlpha ? (byte)(a * shade / 255) : (byte)dark;
                 d[i * 4] = 255; d[i * 4 + 1] = 255; d[i * 4 + 2] = 255; d[i * 4 + 3] = alpha;
             }
         }

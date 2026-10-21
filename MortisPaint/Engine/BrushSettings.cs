@@ -50,6 +50,14 @@ public sealed class BrushSettings
     public bool IsCustom { get; set; }
 
     public BrushSettings Clone() => (BrushSettings)MemberwiseClone();
+
+    /// <summary>Diamètre d'une empreinte (px toile) selon la pression et la distance parcourue (effilement).</summary>
+    public float SizeAt(float pressure, float along)
+    {
+        float f = PressureSize ? MinSize + (1 - MinSize) * pressure : 1f;
+        if (TaperStart > 0.5f && along < TaperStart) f *= 0.2f + 0.8f * (along / TaperStart);
+        return Size * f;
+    }
 }
 
 public static class BrushPresets
@@ -86,5 +94,21 @@ public static class BrushPresets
     public static List<BrushSettings> CreateBlurs() => new()
     {
         new() { Name = "Flou", Size = 50, Hardness = 0.2f, Opacity = 0.6f, PressureSize = false, Spacing = 0.15f, Stabilizer = 0 },
+    };
+
+    /// <summary>Réglages par défaut d'un pinceau personnel à pointe image (création et « Réinitialiser »).</summary>
+    public static BrushSettings CreateImageBrush(string name, string tipId) => new()
+    {
+        Name = name,
+        Shape = BrushShape.Image,
+        TipId = tipId,
+        Size = 60,
+        Hardness = 1,
+        Spacing = 0.3f,
+        PressureSize = true,
+        MinSize = 0.4f,
+        Stabilizer = 1,
+        RotationJitter = 0,
+        IsCustom = true,
     };
 }

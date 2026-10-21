@@ -15,29 +15,62 @@ public sealed class DabRenderer : IDisposable
     readonly SKColor[] _gradColors;
     readonly float[] _gradPos;
     readonly SKShader? _grain;
+    readonly SKColor[]?[] _grayGrad = new SKColor[]?[256];
+    readonly SKColorFilter?[] _grayTip = new SKColorFilter?[256];
     SKRectI _dirty = SKRectI.Empty;
 
-    public DabRenderer(BrushSettings brush, SKColor color, List<SKMatrix> symmetry)
+    public DabRenderer(BrushSettings brush, SKColor color, List<SKMatrix> symmetry) : this(brush, color, symmetry, false) { }
+
+    /// <param name="capOpacity">
+    /// Plafonne l'opacité du trait à la pression (« Pression → opacité ») au lieu de laisser les empreintes
+    /// s'accumuler. Le tampon reçoit alors l'opacité du trait codée en gris (mélange Éclaircir = maximum) :
+    /// il doit être fusionné avec <see cref="CreateBufferFilter"/>.
+    /// </param>
+    public DabRenderer(BrushSettings brush, SKColor color, List<SKMatrix> symmetry, bool capOpacity)
     {
         _b = brush;
         _color = color.WithAlpha(255);
         _sym = symmetry;
+        CapsOpacity = capOpacity && brush.PressureOpacity;
         float h = Math.Clamp(brush.Hardness, 0f, 0.98f);
         _gradPos = new[] { 0f, h, h + (1 - h) * 0.33f, h + (1 - h) * 0.66f, 1f };
-        _gradColors = new[]
-        {
-            _color, _color, _color.WithAlpha(158), _color.WithAlpha(56), _color.WithAlpha(0),
-        };
+        _gradColors = GradientFor(_color);
         if (brush.Grain > 0.01f) _grain = GrainTexture.Get(brush.Grain);
         if (brush.Shape == BrushShape.Image)
         {
             _tip = BrushTips.Get(brush.TipId);
             _tipPaint = new SKPaint { ColorFilter = SKColorFilter.CreateBlendMode(_color, SKBlendMode.SrcIn) };
         }
+        if (CapsOpacity)
+        {
+            _paint.BlendMode = SKBlendMode.Lighten;
+            if (_tipPaint != null) _tipPaint.BlendMode = SKBlendMode.Lighten;
+        }
     }
 
     readonly SKImage? _tip;
     readonly SKPaint? _tipPaint;
+
+    /// <summary>Le tampon contient l'opacité du trait en gris (voir <see cref="CreateBufferFilter"/>).</summary>
+    public bool CapsOpacity { get; }
+
+    /// <summary>
+    /// Filtre de fusion du tampon : convertit le gris (opacité plafonnée) en couleur du trait.
+    /// Null hors plafond d'opacité, le tampon contenant alors directement la couleur.
+    /// </summary>
+    public SKColorFilter? CreateBufferFilter()
+    {
+        if (!CapsOpacity) return null;
+        // Luma d'un gris prémultiplié = sa valeur : elle devient l'alpha, puis on teinte.
+        using var luma = SKColorFilter.CreateLumaColor();
+        using var tint = SKColorFilter.CreateBlendMode(_color, SKBlendMode.SrcIn);
+        return SKColorFilter.CreateCompose(tint, luma);
+    }
+
+    static SKColor[] GradientFor(SKColor ink) => new[]
+    {
+        ink, ink, ink.WithAlpha(158), ink.WithAlpha(56), ink.WithAlpha(0),
+    };
 
     public SKRectI TakeDirty()
     {
@@ -46,17 +79,21 @@ public sealed class DabRenderer : IDisposable
         return d;
     }
 
-    public float SizeAt(float pressure, float along)
-    {
-        float f = _b.PressureSize ? _b.MinSize + (1 - _b.MinSize) * pressure : 1f;
-        if (_b.TaperStart > 0.5f && along < _b.TaperStart) f *= 0.2f + 0.8f * (along / _b.TaperStart);
-        return _b.Size * f;
-    }
+    public float SizeAt(float pressure, float along) => _b.SizeAt(pressure, along);
 
     public void Dab(SKCanvas c, float x, float y, float pressure, float angle, float along)
     {
         float baseSize = SizeAt(pressure, along);
-        float alpha = _b.Flow * (_b.PressureOpacity ? Math.Clamp(pressure, 0.05f, 1f) : 1f);
+        float press = _b.PressureOpacity ? Math.Clamp(pressure, 0.05f, 1f) : 1f;
+        // Plafond : la pression fixe le gris (opacité maximale), le débit la densité de l'empreinte.
+        SKColor ink = _color;
+        float alpha = _b.Flow * press;
+        if (CapsOpacity)
+        {
+            byte g = (byte)Math.Clamp(press * 255f + 0.5f, 1f, 255f);
+            ink = new SKColor(g, g, g);
+            alpha = _b.Flow;
+        }
         int count = Math.Max(1, _b.Count);
         bool spray = count > 1;
 
@@ -72,24 +109,29 @@ public sealed class DabRenderer : IDisposable
                 px += (float)(Math.Cos(a) * rr);
                 py += (float)(Math.Sin(a) * rr);
             }
+            // Angle de la pointe (fixe ou direction du trait, fourni par StrokePath) ; la rotation
+            // aléatoire est tirée une fois pour que les copies symétriques restent des reflets exacts.
+            float deg = angle * 180f / MathF.PI
+                        + (_b.RotationJitter > 0 ? ((float)_rng.NextDouble() * 2 - 1) * _b.RotationJitter : 0);
 
             for (int s = 0; s < _sym.Count; s++)
             {
                 var m = _sym[s];
-                float sx = px, sy = py, sa = angle;
+                float sx = px, sy = py;
+                var lin = SKMatrix.Identity;
                 if (s > 0)
                 {
                     var mp = m.MapPoint(px, py);
                     sx = mp.X; sy = mp.Y;
-                    var v = m.MapVector(MathF.Cos(angle), MathF.Sin(angle));
-                    sa = MathF.Atan2(v.Y, v.X);
+                    // Partie linéaire (rotation, miroir) : la pointe est reflétée comme le trait.
+                    lin = new SKMatrix(m.ScaleX, m.SkewX, 0, m.SkewY, m.ScaleY, 0, 0, 0, 1);
                 }
-                DrawShape(c, sx, sy, MathF.Max(0.3f, d), sa, alpha);
+                DrawShape(c, sx, sy, MathF.Max(0.3f, d), deg, alpha, ink, lin);
             }
         }
     }
 
-    void DrawShape(SKCanvas c, float x, float y, float d, float angle, float alpha)
+    void DrawShape(SKCanvas c, float x, float y, float d, float deg, float alpha, SKColor ink, SKMatrix lin)
     {
         byte a8 = (byte)Math.Clamp(alpha * 255f + 0.5f, 1f, 255f);
         float r = d * 0.5f;
@@ -101,7 +143,7 @@ public sealed class DabRenderer : IDisposable
             int iy = (int)MathF.Floor(y - s * 0.5f + 0.5f);
             _paint.IsAntialias = false;
             _paint.Shader = null;
-            _paint.Color = _color.WithAlpha(a8);
+            _paint.Color = ink.WithAlpha(a8);
             c.DrawRect(ix, iy, s, s, _paint);
             Mark(new SKRectI(ix, iy, ix + s, iy + s));
             return;
@@ -110,50 +152,54 @@ public sealed class DabRenderer : IDisposable
         if (_b.Shape == BrushShape.Image)
         {
             if (_tip == null || _tipPaint == null) return;
-            float deg = (_b.FollowDirection ? angle * 180f / MathF.PI : _b.Angle)
-                        + (_b.RotationJitter > 0 ? ((float)_rng.NextDouble() * 2 - 1) * _b.RotationJitter : 0);
             float scale = d / Math.Max(_tip.Width, _tip.Height);
+            var tipLocal = SKMatrix.CreateTranslation(x, y)
+                .PreConcat(lin)
+                .PreConcat(SKMatrix.CreateRotationDegrees(deg))
+                .PreConcat(SKMatrix.CreateScale(scale, scale));
+            if (CapsOpacity) _tipPaint.ColorFilter = _grayTip[ink.Red] ??= SKColorFilter.CreateBlendMode(ink, SKBlendMode.SrcIn);
             _tipPaint.Color = SKColors.White.WithAlpha(a8);
             c.Save();
-            c.Translate(x, y);
-            c.RotateDegrees(deg);
-            c.Scale(scale);
+            c.Concat(in tipLocal);
             c.DrawImage(_tip, -_tip.Width / 2f, -_tip.Height / 2f, new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear), _tipPaint);
             c.Restore();
-            Mark(BitmapUtil.RoundOut(new SKRect(x - r * 1.5f, y - r * 1.5f, x + r * 1.5f, y + r * 1.5f), 2));
+            float hw = _tip.Width / 2f, hh = _tip.Height / 2f;
+            Mark(BitmapUtil.RoundOut(tipLocal.MapRect(new SKRect(-hw, -hh, hw, hh)), 2));
             return;
         }
 
         _paint.IsAntialias = true;
-        _paint.Color = _color.WithAlpha(a8);
+        _paint.Color = ink.WithAlpha(a8);
         bool soft = _b.Hardness < 0.97f && _b.Shape != BrushShape.Square;
+        var grad = ink == _color ? _gradColors : _grayGrad[ink.Red] ??= GradientFor(ink);
 
         if (_b.Shape == BrushShape.Round)
         {
             SKShader? shader = soft
-                ? SKShader.CreateRadialGradient(new SKPoint(x, y), r, _gradColors, _gradPos, SKShaderTileMode.Clamp)
+                ? SKShader.CreateRadialGradient(new SKPoint(x, y), r, grad, _gradPos, SKShaderTileMode.Clamp)
                 : null;
-            ApplyGrain(shader, SKMatrix.Identity, out var finalShader);
+            ApplyGrain(shader, SKMatrix.Identity, ink, out var finalShader);
             _paint.Shader = finalShader;
             c.DrawCircle(x, y, r, _paint);
             _paint.Shader = null;
             finalShader?.Dispose();
             if (!ReferenceEquals(shader, finalShader)) shader?.Dispose();
+            Mark(BitmapUtil.RoundOut(new SKRect(x - r, y - r, x + r, y + r), 2));
         }
         else
         {
-            float deg = (_b.FollowDirection ? angle : _b.Angle * MathF.PI / 180f) * 180f / MathF.PI;
             float ry = _b.Shape == BrushShape.Ellipse ? Math.Clamp(_b.Roundness, 0.05f, 1f) : 1f;
             var local = SKMatrix.CreateTranslation(x, y)
+                .PreConcat(lin)
                 .PreConcat(SKMatrix.CreateRotationDegrees(deg))
                 .PreConcat(SKMatrix.CreateScale(1, ry));
             c.Save();
             c.Concat(in local);
             SKShader? shader = soft
-                ? SKShader.CreateRadialGradient(new SKPoint(0, 0), r, _gradColors, _gradPos, SKShaderTileMode.Clamp)
+                ? SKShader.CreateRadialGradient(new SKPoint(0, 0), r, grad, _gradPos, SKShaderTileMode.Clamp)
                 : null;
             local.TryInvert(out var inv);
-            ApplyGrain(shader, inv, out var finalShader);
+            ApplyGrain(shader, inv, ink, out var finalShader);
             _paint.Shader = finalShader;
             if (_b.Shape == BrushShape.Square) c.DrawRect(-r, -r, d, d, _paint);
             else c.DrawCircle(0, 0, r, _paint);
@@ -161,15 +207,16 @@ public sealed class DabRenderer : IDisposable
             finalShader?.Dispose();
             if (!ReferenceEquals(shader, finalShader)) shader?.Dispose();
             c.Restore();
+            // Emprise réelle de la forme tournée (un carré à 45° déborde de r·√2).
+            Mark(BitmapUtil.RoundOut(local.MapRect(new SKRect(-r, -r, r, r)), 2));
         }
-        Mark(BitmapUtil.RoundOut(new SKRect(x - r, y - r, x + r, y + r), 2));
     }
 
-    void ApplyGrain(SKShader? shape, SKMatrix grainLocal, out SKShader? result)
+    void ApplyGrain(SKShader? shape, SKMatrix grainLocal, SKColor ink, out SKShader? result)
     {
         if (_grain == null) { result = shape; return; }
         using var grain = grainLocal.IsIdentity ? null : _grain.WithLocalMatrix(grainLocal);
-        using var solid = shape == null ? SKShader.CreateColor(_color) : null;
+        using var solid = shape == null ? SKShader.CreateColor(ink) : null;
         result = SKShader.CreateCompose(shape ?? solid!, grain ?? _grain, SKBlendMode.DstIn);
     }
 
@@ -179,6 +226,7 @@ public sealed class DabRenderer : IDisposable
     {
         _paint.Dispose();
         _tipPaint?.Dispose();
+        foreach (var f in _grayTip) f?.Dispose();
     }
 }
 
