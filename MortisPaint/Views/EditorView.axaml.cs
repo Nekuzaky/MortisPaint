@@ -213,6 +213,8 @@ public partial class EditorView : UserControl
     {
         if (_closed) return null;
         CommitPending();
+        // La lecture coupe les pelures d'oignon : on la stoppe pour enregistrer le vrai réglage.
+        StopPlayback();
         var doc = _engine.Document;
         if (!doc.IsDirty && doc.ProjectPath != null) return null;
         try
@@ -235,6 +237,7 @@ public partial class EditorView : UserControl
     {
         if (_closed) return;
         FlushOpacityEdit();
+        StopPlayback();
         var doc = _engine.Document;
         if (!doc.IsDirty && doc.ProjectPath != null) return;
         // Le filtre et la transformation travaillent directement dans le calque : on enregistre
@@ -263,6 +266,7 @@ public partial class EditorView : UserControl
         if (_closed) return;
         _closed = true;
         StopPlayback();
+        CloseAnimation();
         // Toutes les minuteries : une seule qui tourne encore lirait des calques déjà libérés.
         _timelapseTimer.Stop();
         _toastTimer.Stop();
@@ -289,6 +293,7 @@ public partial class EditorView : UserControl
     void SaveNow()
     {
         CommitPending();
+        StopPlayback();
         try
         {
             GalleryStore.Save(_engine);
