@@ -477,6 +477,12 @@ public partial class EditorView
         try
         {
             CommitPending();
+            if (quarterTurns % 4 == 2)
+            {
+                // Le demi-tour garde la taille de la toile : il passe par l'historique, sans confirmation.
+                _engine.RotateCanvas180();
+                return;
+            }
             if (!await ConfirmResetHistory()) return;
             ReplaceDocument(CanvasOps.Rotate(_engine.Document, quarterTurns));
             Canvas.FitToView();
@@ -509,7 +515,12 @@ public partial class EditorView
                 return;
             }
             if (!await ConfirmResetHistory()) return;
-            ReplaceDocument(CanvasOps.Crop(_engine.Document, rect));
+            if (CanvasOps.Crop(_engine.Document, rect) is not { } cropped)
+            {
+                ShowToast("La sélection est en dehors de la toile");
+                return;
+            }
+            ReplaceDocument(cropped);
             Canvas.FitToView();
             ShowToast($"Toile recadrée : {rect.Width} × {rect.Height}");
         }

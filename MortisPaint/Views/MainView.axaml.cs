@@ -53,7 +53,7 @@ public partial class MainView : UserControl
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnDetachedFromVisualTree(e);
-        if (e.Root is TopLevel top)
+        if (e.RootVisual is TopLevel top)
         {
             top.BackRequested -= OnBackRequested;
             if (top.InsetsManager is { } insets) insets.SafeAreaChanged -= OnSafeAreaChanged;

@@ -63,7 +63,8 @@ public partial class EditorView : UserControl
         _timelapseTimer.Tick += (_, _) =>
         {
             _timelapseTimer.Stop();
-            if (_timelapse != null && !_closed) _timelapse.Capture(_engine.Document, _engine.CurrentFrameFilter());
+            // Sans pelures d'oignon : le timelapse montre le dessin, pas l'aide à l'animation.
+            if (_timelapse != null && !_closed) _timelapse.Capture(_engine.Document, _engine.CurrentFrameFilter(withOnion: false));
         };
 
         Canvas.Attach(_engine, _state);

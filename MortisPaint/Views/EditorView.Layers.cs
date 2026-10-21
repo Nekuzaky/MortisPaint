@@ -30,6 +30,7 @@ public partial class EditorView
     LayerFolder? _selectedFolder;
     readonly List<(Control Row, Layer? Layer, LayerFolder? Folder, int Depth)> _rows = new();
     ToggleButton? _multiButton;
+    Button? _mergeButton;
 
     // Glisser-déposer
     Layer? _dragLayer;
@@ -62,7 +63,7 @@ public partial class EditorView
         });
         LayerButton(Icons.FolderPlus, "Grouper dans un dossier (Ctrl+G)", GroupSelection);
         LayerButton(Icons.Copy, "Dupliquer (Ctrl+J)", DuplicateSelection);
-        LayerButton(Icons.MergeDown, "Fusionner (vers le bas, ou la sélection)", MergeSelection);
+        _mergeButton = LayerButton(Icons.MergeDown, "Fusionner (vers le bas, ou la sélection)", MergeSelection);
         LayerButton(Icons.Delete, "Supprimer", DeleteSelection);
 
         _multiButton = new ToggleButton { Classes = { "icon", "small" }, Content = Icons.Make(Icons.Check, 18), Margin = new Thickness(1) };
@@ -334,6 +335,8 @@ public partial class EditorView
         MultiHint.IsVisible = multi;
         MultiHint.Text = $"{_multi.Count} calque(s) sélectionné(s) — grouper, fusionner et supprimer s'appliquent à la sélection.";
         if (_multiButton != null) _multiButton.IsChecked = _multiMode;
+        // Fusion vers le bas impossible sur le calque du bas ou d'une image à l'autre.
+        if (_mergeButton != null) _mergeButton.IsEnabled = _multi.Count >= 2 || _selectedFolder != null || _engine.CanMergeDown;
         UpdateLayerProps();
         BuildPaperRow();
     }
@@ -523,8 +526,9 @@ public partial class EditorView
             FlushOpacityEdit();
             _multi.Clear();
             _selectedFolder = f;
-            if (isFrame && _engine.CurrentFrame != f) _engine.GoToFrame(f);
-            else RebuildLayers();
+            // Sans test sur CurrentFrame : depuis un calque de fond, l'image affichée doit pouvoir être choisie.
+            if (isFrame) _engine.GoToFrame(f);
+            RebuildLayers();
         };
         return row;
     }
