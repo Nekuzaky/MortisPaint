@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -18,17 +19,28 @@ public partial class EditorView
 {
     FilterSession? _filter;
     DispatcherTimer? _filterTimer;
+    CancellationTokenSource? _filterCts;
     bool _filterPending;
 
     void BuildToolSupport()
     {
-        _filterTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(70) };
-        _filterTimer.Tick += (_, _) =>
+        _filterTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(40) };
+        _filterTimer.Tick += async (_, _) =>
         {
             _filterTimer.Stop();
-            if (_filter == null || !_filterPending) return;
+            if (_closed || _filter == null || !_filterPending) return;
             _filterPending = false;
-            _filter.Preview();
+            // L'aperçu se calcule en arrière-plan : l'interface reste fluide, une demande plus récente annule la précédente.
+            _filterCts?.Cancel();
+            var cts = _filterCts = new CancellationTokenSource();
+            try
+            {
+                await _filter.UpdatePreviewAsync(cts.Token);
+            }
+            catch (Exception ex)
+            {
+                ShowToast("Aperçu impossible : " + ex.Message);
+            }
         };
         FilterApply.Click += (_, _) => ApplyFilter();
         FilterCancel.Click += (_, _) => CancelFilter();
@@ -198,7 +210,7 @@ public partial class EditorView
             ShowToast("Le calque actif est masqué");
             return;
         }
-        _filter = new FilterSession(_engine, def);
+        _filter = new FilterSession(_engine, def, previewNow: false);
         FilterTitle.Text = def.Name + (_engine.Selection.HasSelection ? " (sélection)" : "");
         FilterParams.Children.Clear();
         for (int i = 0; i < def.Params.Length; i++)
@@ -238,6 +250,7 @@ public partial class EditorView
         Sheet.IsVisible = false;
         ToolOptions.IsVisible = false;
         QuickSliders.IsVisible = false;
+        ScheduleFilterPreview();
     }
 
     void ScheduleFilterPreview()
@@ -251,19 +264,22 @@ public partial class EditorView
     {
         if (_filter == null) return;
         _filterTimer?.Stop();
-        if (_filterPending) _filter.Preview();
+        _filterCts?.Cancel();
         _filterPending = false;
         var name = _filter.Filter.Name;
+        // Commit calcule lui-même les derniers réglages si l'aperçu est en retard.
         _filter.Commit();
+        bool hadEffect = _filter.HadEffect;
         _filter = null;
         CloseFilterPanel();
-        ShowToast("Filtre appliqué : " + name);
+        ShowToast(hadEffect ? "Filtre appliqué : " + name : "Filtre sans effet");
     }
 
     void CancelFilter()
     {
         if (_filter == null) return;
         _filterTimer?.Stop();
+        _filterCts?.Cancel();
         _filterPending = false;
         _filter.Cancel();
         _filter = null;

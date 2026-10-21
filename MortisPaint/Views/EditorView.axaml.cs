@@ -240,7 +240,9 @@ public partial class EditorView : UserControl
         // Le filtre et la transformation travaillent directement dans le calque : on enregistre
         // ses pixels d'origine, puis on réaffiche l'aperçu. Le texte n'est qu'un aperçu superposé.
         var transform = Canvas.Transform;
+        var filter = _filter;
         transform?.ShowOriginal();
+        filter?.ShowOriginal();
         try
         {
             GalleryStore.Save(_engine);
@@ -251,6 +253,7 @@ public partial class EditorView : UserControl
         }
         finally
         {
+            filter?.ShowPreview();
             transform?.ShowTransformed();
         }
     }

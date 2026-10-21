@@ -169,6 +169,11 @@ public static class Compositor
                     c.Restore();
                 }
             }
+            // Le texte deviendra un calque Normal à 100 % posé au-dessus de ce groupe : son aperçu
+            // est dessiné ici, sans hériter de l'opacité ni du mode du calque cible.
+            if (preview is TextSession text)
+                for (int k = i; k < next; k++)
+                    if (units[k].Layer == text.Target) { text.DrawPreview(c); break; }
             i = next;
         }
     }
@@ -221,7 +226,7 @@ public static class Compositor
 
     static void DrawContent(SKCanvas c, Layer l, SKPaint? paint, ILayerPreview? preview)
     {
-        if (preview != null && preview.Target == l)
+        if (preview != null && preview.Target == l && preview is not TextSession)
         {
             SaveLayer(c, paint);
             c.DrawBitmap(l.Bitmap, 0, 0);
