@@ -155,7 +155,7 @@ public partial class EditorView : UserControl
         _engine.Ruler.AngleDegrees = old.Ruler.AngleDegrees;
         _engine.Ruler.CenterX = doc.Width / 2f;
         _engine.Ruler.CenterY = doc.Height / 2f;
-        _thumbs.Clear();
+        DisposeThumbs();
         _frameThumbs.Clear();
         BindEngine(_engine);
         Canvas.Attach(_engine, _state);
@@ -194,7 +194,7 @@ public partial class EditorView : UserControl
         if (FilterPanel.IsVisible) { CancelFilter(); return true; }
         if (TextPanel.IsVisible) { CancelText(); return true; }
         if (!_wide && _sheetOpen) { SetSheetOpen(false); return true; }
-        if (RefWindow.IsVisible) { RefWindow.IsVisible = false; return true; }
+        if (RefWindow.IsVisible) { HideReference(); return true; }
         if (Canvas.Transform != null) { Canvas.CancelTransform(); return true; }
         return false;
     }
@@ -207,10 +207,33 @@ public partial class EditorView : UserControl
         if (_text != null) CommitText();
     }
 
-    public void AutoSave()
+    /// <summary>Valide ce qui est en cours et enregistre. Retourne le message d'erreur, ou null si tout va bien.</summary>
+    public string? AutoSave()
+    {
+        if (_closed) return null;
+        CommitPending();
+        var doc = _engine.Document;
+        if (!doc.IsDirty && doc.ProjectPath != null) return null;
+        try
+        {
+            GalleryStore.Save(_engine);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            ShowToast("Erreur d'enregistrement : " + ex.Message);
+            return ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// Mise en arrière-plan (Android) : enregistre sans valider ce qui est en cours. L'application peut
+    /// être tuée en arrière-plan ; si on revient, le filtre, le texte ou la transformation sont toujours là.
+    /// </summary>
+    public void SaveForSuspend()
     {
         if (_closed) return;
-        CommitPending();
+        FlushOpacityEdit();
         var doc = _engine.Document;
         if (!doc.IsDirty && doc.ProjectPath != null) return;
         try
@@ -228,10 +251,26 @@ public partial class EditorView : UserControl
         if (_closed) return;
         _closed = true;
         StopPlayback();
+        // Toutes les minuteries : une seule qui tourne encore lirait des calques déjà libérés.
         _timelapseTimer.Stop();
+        _toastTimer.Stop();
+        _thumbTimer?.Stop();
+        _opacityTimer?.Stop();
+        _filterTimer?.Stop();
+        _brushPreviewTimer?.Stop();
         MortisTheme.Changed -= OnThemeChanged;
+        // Fermeture sans enregistrement réussi : on abandonne ce qui est en cours.
+        _filter?.Cancel();
+        _filter = null;
+        _text?.Cancel();
+        _text = null;
+        if (Canvas.Transform != null) Canvas.CancelTransform();
         UnbindEngine(_engine);
         Canvas.Detach();
+        DisposeThumbs();
+        foreach (var bmp in _brushPreviews.Values) bmp.Dispose();
+        _brushPreviews.Clear();
+        RefView.Release();
         _engine.Dispose();
     }
 
@@ -276,6 +315,23 @@ public partial class EditorView : UserControl
         _timelapseTimer.Start();
     }
 
+    async Task ClearTimelapseAsync()
+    {
+        if (_timelapse is not { } recorder) return;
+        if (!await MainView.Current!.ConfirmAsync("Effacer le timelapse ?",
+                "Toutes les images enregistrées de cette œuvre seront supprimées. Le dessin n'est pas touché.", "Effacer")) return;
+        try
+        {
+            await recorder.FlushAsync();
+            recorder.Clear();
+            ShowToast("Timelapse effacé");
+        }
+        catch (Exception ex)
+        {
+            ShowToast("Effacement impossible : " + ex.Message);
+        }
+    }
+
     async Task ExportTimelapseAsync()
     {
         CommitPending();
@@ -284,26 +340,26 @@ public partial class EditorView : UserControl
             ShowToast("Le timelapse est désactivé (Préférences)");
             return;
         }
-        await _timelapse.FlushAsync();
-        var frames = _timelapse.Frames();
-        if (frames.Count < 2)
-        {
-            ShowToast("Pas encore assez d'images : dessine un peu !");
-            return;
-        }
-        var top = TopLevel.GetTopLevel(this);
-        if (top == null) return;
-        var file = await top.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
-            Title = "Exporter le timelapse",
-            SuggestedFileName = _engine.Document.Name + " - timelapse.gif",
-            DefaultExtension = "gif",
-            FileTypeChoices = new[] { GifFileType },
-        });
-        if (file == null) return;
-        ShowToast("Création du timelapse…");
         try
         {
+            await _timelapse.FlushAsync();
+            var frames = _timelapse.Frames();
+            if (frames.Count < 2)
+            {
+                ShowToast("Pas encore assez d'images : dessine un peu !");
+                return;
+            }
+            var top = TopLevel.GetTopLevel(this);
+            if (top == null) return;
+            var file = await top.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "Exporter le timelapse",
+                SuggestedFileName = _engine.Document.Name + " - timelapse.gif",
+                DefaultExtension = "gif",
+                FileTypeChoices = new[] { GifFileType },
+            });
+            if (file == null) return;
+            ShowToast("Création du timelapse…");
             var bytes = await Task.Run(() =>
             {
                 using var ms = new MemoryStream();
@@ -552,6 +608,13 @@ public partial class EditorView : UserControl
         return mi;
     }
 
+    /// <summary>Commande qui modifie le document : valide d'abord le filtre, le texte ou la transformation en cours.</summary>
+    Action Cmd(Action action) => () =>
+    {
+        CommitPending();
+        action();
+    };
+
     void BuildMenus()
     {
         var menu = new MenuFlyout();
@@ -576,16 +639,16 @@ public partial class EditorView : UserControl
         menu.Items.Add(filters);
 
         var sel = new MenuItem { Header = "Sélection" };
-        sel.Items.Add(Item("Tout sélectionner", () => _engine.Selection.SelectAll(), "Ctrl+A"));
-        sel.Items.Add(Item("Désélectionner", () => _engine.Selection.Clear(), "Ctrl+D"));
-        sel.Items.Add(Item("Inverser la sélection", () => _engine.Selection.Invert(), "Ctrl+Shift+I"));
-        sel.Items.Add(Item("Sélectionner le contenu du calque", () =>
+        sel.Items.Add(Item("Tout sélectionner", Cmd(() => _engine.Selection.SelectAll()), "Ctrl+A"));
+        sel.Items.Add(Item("Désélectionner", Cmd(() => _engine.Selection.Clear()), "Ctrl+D"));
+        sel.Items.Add(Item("Inverser la sélection", Cmd(() => _engine.Selection.Invert()), "Ctrl+Shift+I"));
+        sel.Items.Add(Item("Sélectionner le contenu du calque", Cmd(() =>
         {
             if (!_engine.SelectLayerContent(_state.SelectOp)) ShowToast("Le calque est vide");
-        }));
+        })));
         sel.Items.Add(new Separator());
         sel.Items.Add(Item("Effacer le contenu", ClearLayerOrSelection, "Delete"));
-        sel.Items.Add(Item("Remplir avec la couleur", () => _engine.FillSelection(_state.Color)));
+        sel.Items.Add(Item("Remplir avec la couleur", Cmd(() => _engine.FillSelection(_state.Color))));
         sel.Items.Add(Item("Remplir avec la trame", FillWithTone));
         sel.Items.Add(Item("Recadrer la toile sur la sélection", CropToSelection));
         menu.Items.Add(sel);
@@ -596,16 +659,16 @@ public partial class EditorView : UserControl
         canvas.Items.Add(Item("Pivoter de 90° à droite", () => RotateCanvas(1)));
         canvas.Items.Add(Item("Pivoter de 90° à gauche", () => RotateCanvas(-1)));
         canvas.Items.Add(Item("Pivoter de 180°", () => RotateCanvas(2)));
-        canvas.Items.Add(Item("Retourner horizontalement", () => _engine.FlipCanvas(true)));
-        canvas.Items.Add(Item("Retourner verticalement", () => _engine.FlipCanvas(false)));
+        canvas.Items.Add(Item("Retourner horizontalement", Cmd(() => _engine.FlipCanvas(true))));
+        canvas.Items.Add(Item("Retourner verticalement", Cmd(() => _engine.FlipCanvas(false))));
         canvas.Items.Add(new Separator());
         canvas.Items.Add(Item("Ajuster à l'écran", Canvas.FitToView, "Ctrl+D0"));
         canvas.Items.Add(Item("Taille réelle (100 %)", Canvas.ZoomActualPixels, "Ctrl+D1"));
         canvas.Items.Add(Item("Retourner la vue (miroir)", Canvas.FlipView, "F"));
         canvas.Items.Add(Item("Réinitialiser la rotation", Canvas.ResetRotation));
         canvas.Items.Add(new Separator());
-        canvas.Items.Add(Item("Fusionner les calques visibles", () => { CommitPending(); _engine.MergeVisible(); }));
-        canvas.Items.Add(Item("Aplatir l'image", () => { CommitPending(); _engine.FlattenAll(); }));
+        canvas.Items.Add(Item("Fusionner les calques visibles", Cmd(() => _engine.MergeVisible())));
+        canvas.Items.Add(Item("Aplatir l'image", Cmd(() => _engine.FlattenAll())));
         canvas.Items.Add(Item("Renommer l'œuvre…", () => _ = RenameAsync()));
         menu.Items.Add(canvas);
 
@@ -622,11 +685,7 @@ public partial class EditorView : UserControl
             StartTimelapse();
         }));
         timelapse.Items.Add(Item("Exporter en GIF…", () => _ = ExportTimelapseAsync()));
-        timelapse.Items.Add(Item("Effacer le timelapse de cette œuvre", () =>
-        {
-            _timelapse?.Clear();
-            ShowToast("Timelapse effacé");
-        }));
+        timelapse.Items.Add(Item("Effacer le timelapse de cette œuvre", () => _ = ClearTimelapseAsync()));
         menu.Items.Add(timelapse);
 
         var prefs = new MenuItem { Header = "Préférences" };
@@ -739,8 +798,18 @@ public partial class EditorView : UserControl
 
     void OnKeyDown(object? sender, KeyEventArgs e)
     {
-        if (_closed || MainView.Current == null) return;
+        if (_closed || MainView.Current == null || MainView.Current.IsDialogOpen) return;
         if (_top?.FocusManager?.GetFocusedElement() is TextBox) return;
+        if (_text != null)
+        {
+            // Saisie d'un texte en cours : le focus a pu quitter le champ (police, gras…),
+            // les raccourcis ne doivent pas agir sur le calque derrière.
+            if (e.Key == Key.Enter) CommitText();
+            else if (e.Key == Key.Escape) CancelText();
+            else return;
+            e.Handled = true;
+            return;
+        }
         bool ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
         bool shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
         bool handled = true;
@@ -755,18 +824,18 @@ public partial class EditorView : UserControl
                 case Key.S: SaveNow(); break;
                 case Key.E when shift: _ = ExportPsdAsync(); break;
                 case Key.E: _ = ExportAsync(SKEncodedImageFormat.Png); break;
-                case Key.I when shift: _engine.Selection.Invert(); break;
+                case Key.I when shift: Cmd(() => _engine.Selection.Invert())(); break;
                 case Key.I: _ = ImportImageAsync(); break;
-                case Key.A: _engine.Selection.SelectAll(); break;
-                case Key.D: _engine.Selection.Clear(); break;
+                case Key.A: Cmd(() => _engine.Selection.SelectAll())(); break;
+                case Key.D: Cmd(() => _engine.Selection.Clear())(); break;
                 case Key.D0: case Key.NumPad0: Canvas.FitToView(); break;
                 case Key.D1: case Key.NumPad1: Canvas.ZoomActualPixels(); break;
                 case Key.OemPlus: case Key.Add: Canvas.ZoomBy(1.25); break;
                 case Key.OemMinus: case Key.Subtract: Canvas.ZoomBy(0.8); break;
-                case Key.N when shift: _engine.AddLayer(); break;
-                case Key.J: _engine.DuplicateLayer(); break;
+                case Key.N when shift: Cmd(() => { ClearLayerSelection(); _engine.AddLayer(); })(); break;
+                case Key.J: Cmd(DuplicateSelection)(); break;
                 case Key.G: GroupSelection(); break;
-                case Key.T: _state.SetTool(ToolKind.Transform); break;
+                case Key.T: CommitPending(); SelectTool(ToolKind.Transform); break;
                 default: handled = false; break;
             }
         }
@@ -794,7 +863,6 @@ public partial class EditorView : UserControl
                 case Key.OemOpenBrackets: ResizeBrush(1 / 1.15); break;
                 case Key.OemCloseBrackets: ResizeBrush(1.15); break;
                 case Key.Delete:
-                case Key.Back:
                     ClearLayerOrSelection();
                     break;
                 case Key.Enter:

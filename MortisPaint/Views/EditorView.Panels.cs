@@ -40,9 +40,11 @@ public partial class EditorView
         _brushPreviewTimer.Tick += (_, _) =>
         {
             _brushPreviewTimer.Stop();
+            if (_closed) return;
             var b = _state.CurrentBrush;
-            _brushPreviews.Remove(b);
+            _brushPreviews.Remove(b, out var old);
             if (_brushPreviewImages.TryGetValue(b, out var img)) img.Source = GetBrushPreview(b);
+            old?.Dispose();
             if (b.IsCustom) _state.SaveCustomBrushes();
         };
 
@@ -183,19 +185,7 @@ public partial class EditorView
             if (bmp == null) return;
             var id = BrushTips.Create(bmp);
             int n = _state.Brushes.Count(b => b.IsCustom) + 1;
-            var brush = new BrushSettings
-            {
-                Name = $"Image {n}",
-                Shape = BrushShape.Image,
-                TipId = id,
-                Size = 60,
-                Hardness = 1,
-                Spacing = 0.3f,
-                PressureSize = true,
-                MinSize = 0.4f,
-                Stabilizer = 1,
-                RotationJitter = 0,
-            };
+            var brush = EditorState.CreateImageBrush($"Image {n}", id);
             if (_state.Tool is not (ToolKind.Brush or ToolKind.Shape)) _state.SetTool(ToolKind.Brush);
             _state.AddCustomBrush(brush);
             ShowToast("Pinceau créé : clic droit dessus pour le supprimer");

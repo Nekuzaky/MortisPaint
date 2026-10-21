@@ -33,10 +33,20 @@ public sealed class ReferenceView : Control, ICustomHitTest
 
     public void SetImage(SKBitmap bitmap)
     {
-        _source?.Dispose();
+        Release();
         _source = bitmap;
         _display = SkiaBitmaps.FromSkia(bitmap, 2048, checker: false);
         Fit();
+    }
+
+    /// <summary>Libère l'image (fermeture de l'éditeur).</summary>
+    public void Release()
+    {
+        _source?.Dispose();
+        _source = null;
+        _display?.Dispose();
+        _display = null;
+        InvalidateVisual();
     }
 
     public void Fit()
@@ -119,6 +129,7 @@ public sealed class ReferenceView : Control, ICustomHitTest
         bool tap = !_moved && _touches.Count == 1;
         _touches.Remove(e.Pointer.Id);
         e.Pointer.Capture(null);
+        ResumeAfterPinch();
         if (tap) Pick(e.GetPosition(this));
     }
 
@@ -126,6 +137,20 @@ public sealed class ReferenceView : Control, ICustomHitTest
     {
         base.OnPointerCaptureLost(e);
         _touches.Remove(e.Pointer.Id);
+        ResumeAfterPinch();
+    }
+
+    /// <summary>Fin d'un pincement : le doigt restant reprend le déplacement depuis sa position actuelle, sans saut.</summary>
+    void ResumeAfterPinch()
+    {
+        if (_touches.Count == 1)
+            foreach (var p in _touches.Values) _lastPos = p;
+        else if (_touches.Count >= 2)
+        {
+            var pts = new List<Point>(_touches.Values);
+            _pinchStartDist = Dist(pts[0], pts[1]);
+            _pinchStartZoom = _zoom;
+        }
     }
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)

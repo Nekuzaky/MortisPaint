@@ -18,7 +18,9 @@ public partial class EditorView
     {
         RefOpenButton.Click += async (_, _) => await OpenReferenceImageAsync();
         RefFitButton.Click += (_, _) => RefView.Fit();
-        RefCloseButton.Click += (_, _) => { RefWindow.IsVisible = false; ReferenceButton.Classes.Set("active", false); };
+        RefCloseButton.Click += (_, _) => HideReference();
+        // Rotation de l'écran, redimensionnement : la fenêtre reste dans la zone de la toile.
+        CanvasArea.SizeChanged += (_, _) => ClampReferenceWindow();
         RefView.ColorPicked += c =>
         {
             _state.SetColor(c);
@@ -62,6 +64,27 @@ public partial class EditorView
             e.Handled = true;
         };
         RefResize.PointerReleased += (_, e) => { _refResizing = false; e.Pointer.Capture(null); RefView.Fit(); };
+    }
+
+    void HideReference()
+    {
+        RefWindow.IsVisible = false;
+        ReferenceButton.Classes.Set("active", false);
+    }
+
+    void ClampReferenceWindow()
+    {
+        var area = CanvasArea.Bounds.Size;
+        if (area.Width <= 0 || area.Height <= 0) return;
+        double w = Math.Clamp(RefWindow.Width, 160, Math.Max(160, area.Width));
+        double h = Math.Clamp(RefWindow.Height, 120, Math.Max(120, area.Height));
+        double x = Math.Clamp(RefWindow.Margin.Left, 0, Math.Max(0, area.Width - w));
+        double y = Math.Clamp(RefWindow.Margin.Top, 0, Math.Max(0, area.Height - h));
+        bool resized = w != RefWindow.Width || h != RefWindow.Height;
+        RefWindow.Width = w;
+        RefWindow.Height = h;
+        RefWindow.Margin = new Thickness(x, y, 0, 0);
+        if (resized) RefView.Fit();
     }
 
     void ToggleReference()

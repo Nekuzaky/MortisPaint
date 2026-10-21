@@ -386,6 +386,10 @@ public partial class EditorView
 
     // ================================================================ taille de la toile
 
+    // Même plafond que la création d'une toile dans la galerie (6000 × 6000).
+    const long MaxCanvasPixels = 6000L * 6000;
+    static readonly long MaxCanvasBytes = OperatingSystem.IsAndroid() ? 800L << 20 : 3000L << 20;
+
     bool _canvasScale;
     float _anchorX = 0.5f, _anchorY = 0.5f;
     readonly List<ToggleButton> _anchorButtons = new();
@@ -416,11 +420,25 @@ public partial class EditorView
                 ShowToast($"Taille entre 16 et {PsdFile.MaxSide} px");
                 return;
             }
+            var doc = _engine.Document;
+            // Garde mémoire : chaque calque coûte 4 octets par pixel, plus la composition et l'aperçu.
+            long bytes = (long)w * h * 4 * (doc.Layers.Count + 3);
+            if ((long)w * h > MaxCanvasPixels || bytes > MaxCanvasBytes)
+            {
+                ShowToast($"Toile trop grande pour {doc.Layers.Count} calque(s) : environ {bytes / (1024 * 1024)} Mo");
+                return;
+            }
             CanvasDialog.IsVisible = false;
             await System.Threading.Tasks.Task.Yield();
-            var doc = _engine.Document;
-            ReplaceDocument(_canvasScale ? CanvasOps.Scale(doc, w, h) : CanvasOps.Resize(doc, w, h, _anchorX, _anchorY));
-            ShowToast($"Toile : {w} × {h}");
+            try
+            {
+                ReplaceDocument(_canvasScale ? CanvasOps.Scale(doc, w, h) : CanvasOps.Resize(doc, w, h, _anchorX, _anchorY));
+                ShowToast($"Toile : {w} × {h}");
+            }
+            catch (Exception ex)
+            {
+                ShowToast("Changement de taille impossible : " + ex.Message);
+            }
         };
     }
 
@@ -456,25 +474,49 @@ public partial class EditorView
 
     async void RotateCanvas(int quarterTurns)
     {
-        CommitPending();
-        if (!await ConfirmResetHistory()) return;
-        ReplaceDocument(CanvasOps.Rotate(_engine.Document, quarterTurns));
-        Canvas.FitToView();
+        try
+        {
+            CommitPending();
+            if (!await ConfirmResetHistory()) return;
+            ReplaceDocument(CanvasOps.Rotate(_engine.Document, quarterTurns));
+            Canvas.FitToView();
+        }
+        catch (Exception ex)
+        {
+            ShowToast("Rotation impossible : " + ex.Message);
+        }
     }
 
     async void CropToSelection()
     {
-        CommitPending();
-        if (!_engine.Selection.HasSelection || _engine.Selection.IsInverse)
+        try
         {
-            ShowToast("Fais d'abord une sélection");
-            return;
+            CommitPending();
+            var sel = _engine.Selection;
+            if (sel.Path is not { } path || sel.IsInverse)
+            {
+                ShowToast("Fais d'abord une sélection");
+                return;
+            }
+            // Bornes exactes de la sélection (Selection.Bounds garde une marge pour l'anticrénelage),
+            // limitées à la toile : une sélection déplacée peut en sortir.
+            var b = path.Bounds;
+            var rect = BitmapUtil.Clamp(new SKRectI((int)MathF.Floor(b.Left), (int)MathF.Floor(b.Top),
+                (int)MathF.Ceiling(b.Right), (int)MathF.Ceiling(b.Bottom)), _engine.Width, _engine.Height);
+            if (rect.Width < 1 || rect.Height < 1)
+            {
+                ShowToast("La sélection est en dehors de la toile");
+                return;
+            }
+            if (!await ConfirmResetHistory()) return;
+            ReplaceDocument(CanvasOps.Crop(_engine.Document, rect));
+            Canvas.FitToView();
+            ShowToast($"Toile recadrée : {rect.Width} × {rect.Height}");
         }
-        if (!await ConfirmResetHistory()) return;
-        var rect = _engine.Selection.Bounds;
-        ReplaceDocument(CanvasOps.Crop(_engine.Document, rect));
-        Canvas.FitToView();
-        ShowToast($"Toile recadrée : {rect.Width} × {rect.Height}");
+        catch (Exception ex)
+        {
+            ShowToast("Recadrage impossible : " + ex.Message);
+        }
     }
 
     async System.Threading.Tasks.Task<bool> ConfirmResetHistory()

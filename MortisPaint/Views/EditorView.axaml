@@ -205,7 +205,7 @@
                                 <ToggleButton x:Name="TabLayers" Grid.Column="2" Classes="tab" Content="Calques" />
                             </Grid>
                         </Border>
-                        <Button x:Name="SheetClose" Grid.Column="1" Classes="icon small" IsVisible="False" Margin="4,0,0,0">
+                        <Button x:Name="SheetClose" Grid.Column="1" Classes="icon small" IsVisible="False" Margin="4,0,0,0" ToolTip.Tip="Fermer le panneau">
                             <c:LineIcon Data="{x:Static c:Icons.Close}" Width="16" Height="16" />
                         </Button>
                     </Grid>

@@ -455,3 +455,6 @@ $RECYCLE.BIN/
 
 # Exports ibisPaint de test (fichiers personnels)
 ibispaint-samples/
+
+# Worktrees des agents Claude Code
+.claude/

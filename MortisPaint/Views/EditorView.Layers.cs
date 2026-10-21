@@ -160,6 +160,7 @@ public partial class EditorView
         _thumbTimer.Tick += (_, _) =>
         {
             _thumbTimer.Stop();
+            if (_closed) return;
             foreach (var l in _dirtyThumbs)
                 if (_thumbImages.TryGetValue(l, out var img)) img.Source = GetThumb(l);
             _dirtyThumbs.Clear();
@@ -278,7 +279,14 @@ public partial class EditorView
         if (_thumbs.TryGetValue(l, out var t) && t.Version == l.Version) return t.Bitmap;
         var bmp = SkiaBitmaps.FromSkia(l.Bitmap, 96, checker: true);
         _thumbs[l] = (l.Version, bmp);
+        t.Bitmap?.Dispose();
         return bmp;
+    }
+
+    void DisposeThumbs()
+    {
+        foreach (var (_, bmp) in _thumbs.Values) bmp.Dispose();
+        _thumbs.Clear();
     }
 
     void RefreshAllThumbnails()
@@ -300,7 +308,11 @@ public partial class EditorView
         LayerList.Children.Clear();
         _rows.Clear();
         _thumbImages.Clear();
-        foreach (var dead in _thumbs.Keys.Where(k => !layers.Contains(k)).ToList()) _thumbs.Remove(dead);
+        foreach (var dead in _thumbs.Keys.Where(k => !layers.Contains(k)).ToList())
+        {
+            _thumbs[dead].Bitmap.Dispose();
+            _thumbs.Remove(dead);
+        }
 
         // Du haut vers le bas : l'en-tête d'un dossier précède son contenu.
         var emitted = new HashSet<LayerFolder>();
@@ -365,8 +377,9 @@ public partial class EditorView
         };
         grip.PointerReleased += (_, e) =>
         {
-            e.Pointer.Capture(null);
+            // Valider avant de relâcher la capture : sa perte déclenche FinishDrag(commit: false).
             FinishDrag(commit: true);
+            e.Pointer.Capture(null);
             e.Handled = true;
         };
         grip.PointerCaptureLost += (_, _) => FinishDrag(commit: false);
@@ -451,6 +464,7 @@ public partial class EditorView
             RebuildLayers();
         };
         chevron.Tapped += (_, e) => e.Handled = true;
+        ToolTip.SetTip(chevron, f.Expanded ? "Replier le dossier" : "Déplier le dossier");
 
         var eye = new Button
         {
@@ -459,7 +473,12 @@ public partial class EditorView
             Opacity = f.Visible ? 1 : 0.5,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        eye.Click += (_, _) => _engine.SetFolderProps(f, f.GetProps() with { Visible = !f.Visible }, f.Visible ? "Masquer le dossier" : "Afficher le dossier");
+        ToolTip.SetTip(eye, f.Visible ? "Masquer le dossier" : "Afficher le dossier");
+        eye.Click += (_, _) =>
+        {
+            FlushOpacityEdit();
+            _engine.SetFolderProps(f, f.GetProps() with { Visible = !f.Visible }, f.Visible ? "Masquer le dossier" : "Afficher le dossier");
+        };
         eye.Tapped += (_, e) => e.Handled = true;
 
         var (s, e2) = _engine.Document.FolderRange(f);
@@ -608,7 +627,13 @@ public partial class EditorView
             {
                 int a = _engine.Document.ActiveIndex;
                 _multi.Clear();
-                for (int k = Math.Min(a, index); k <= Math.Max(a, index); k++) _multi.Add(_engine.Document.Layers[k]);
+                // Seulement les calques visibles dans la liste : rien de caché dans un dossier replié.
+                var shown = _rows.Where(r => r.Layer != null).Select(r => r.Layer!).ToHashSet();
+                for (int k = Math.Min(a, index); k <= Math.Max(a, index); k++)
+                {
+                    var layer = _engine.Document.Layers[k];
+                    if (k == a || shown.Contains(layer)) _multi.Add(layer);
+                }
                 RebuildLayers();
                 return;
             }
@@ -629,7 +654,11 @@ public partial class EditorView
             Opacity = doc.PaperVisible ? 1 : 0.5,
         };
         ToolTip.SetTip(eye, doc.PaperVisible ? "Papier transparent" : "Afficher le papier");
-        eye.Click += (_, _) => _engine.SetPaper(!doc.PaperVisible, doc.PaperColor);
+        eye.Click += (_, _) =>
+        {
+            FlushOpacityEdit();
+            _engine.SetPaper(!doc.PaperVisible, doc.PaperColor);
+        };
         var swatch = new Border
         {
             Width = 42,
@@ -642,7 +671,11 @@ public partial class EditorView
         };
         var label = new TextBlock { Text = "Papier", VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeight.SemiBold };
         var useColor = new Button { Classes = { "flat" }, Padding = new Thickness(8, 4), VerticalAlignment = VerticalAlignment.Center, Content = new TextBlock { Text = "Couleur actuelle", FontSize = 12, Foreground = MortisTheme.Accent } };
-        useColor.Click += (_, _) => _engine.SetPaper(true, _state.Color);
+        useColor.Click += (_, _) =>
+        {
+            FlushOpacityEdit();
+            _engine.SetPaper(true, _state.Color);
+        };
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto"), Margin = new Thickness(7, 0, 0, 0) };
         grid.Children.Add(eye);
         Grid.SetColumn(swatch, 1);

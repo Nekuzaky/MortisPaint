@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Controls.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using MortisPaint.Engine;
@@ -42,19 +43,51 @@ public partial class MainView : UserControl
         {
             // Barres système sombres, comme le reste de l'interface.
             insets.SystemBarColor = Avalonia.Media.Color.FromRgb(0x08, 0x08, 0x08);
-            Padding = insets.SafeAreaPadding;
-            insets.SafeAreaChanged += (_, a) => Padding = a.SafeAreaPadding;
+            insets.SafeAreaChanged += OnSafeAreaChanged;
         }
-        if (Application.Current?.TryGetFeature(typeof(IActivatableLifetime)) is IActivatableLifetime life)
-            life.Deactivated += (_, _) => _editor?.AutoSave();
+        if (top.InputPane is { } pane) pane.StateChanged += OnInputPaneChanged;
+        UpdatePadding();
+        if (Lifetime is { } life) life.Deactivated += OnDeactivated;
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnDetachedFromVisualTree(e);
-        var top = TopLevel.GetTopLevel(this);
-        if (top != null) top.BackRequested -= OnBackRequested;
+        if (e.Root is TopLevel top)
+        {
+            top.BackRequested -= OnBackRequested;
+            if (top.InsetsManager is { } insets) insets.SafeAreaChanged -= OnSafeAreaChanged;
+            if (top.InputPane is { } pane) pane.StateChanged -= OnInputPaneChanged;
+        }
+        if (Lifetime is { } life) life.Deactivated -= OnDeactivated;
     }
+
+    static IActivatableLifetime? Lifetime =>
+        Application.Current?.TryGetFeature(typeof(IActivatableLifetime)) as IActivatableLifetime;
+
+    void OnSafeAreaChanged(object? sender, SafeAreaChangedArgs a) => UpdatePadding();
+
+    void OnInputPaneChanged(object? sender, InputPaneStateEventArgs a) => UpdatePadding();
+
+    /// <summary>
+    /// Marges système, plus le clavier virtuel : en affichage bord à bord (Android 15), adjustResize ne
+    /// réduit plus la fenêtre et le clavier recouvrirait le panneau Texte. On ne compte que la partie
+    /// du clavier qui chevauche réellement la fenêtre, pour ne rien ajouter quand elle a déjà été réduite.
+    /// </summary>
+    void UpdatePadding()
+    {
+        if (TopLevel.GetTopLevel(this) is not { } top) return;
+        var pad = top.InsetsManager?.SafeAreaPadding ?? default;
+        if (top.InputPane is { State: InputPaneState.Open } pane)
+        {
+            double overlap = top.ClientSize.Height - pane.OccludedRect.Top;
+            if (overlap > pad.Bottom) pad = new Thickness(pad.Left, pad.Top, pad.Right, overlap);
+        }
+        Padding = pad;
+    }
+
+    // Mise en arrière-plan (Android) : on enregistre sans valider le filtre, le texte ou la transformation en cours.
+    void OnDeactivated(object? sender, ActivatedEventArgs e) => _editor?.SaveForSuspend();
 
     async void OnBackRequested(object? sender, RoutedEventArgs e)
     {
@@ -91,14 +124,23 @@ public partial class MainView : UserControl
     {
         if (_editor == null) return;
         var ed = _editor;
-        ed.AutoSave();
+        var error = ed.AutoSave();
+        // Échec d'enregistrement : on ne ferme pas sans prévenir, sinon le travail est perdu.
+        if (error != null && !await ConfirmUnsavedAsync(error, "Fermer sans enregistrer")) return;
+        if (_editor != ed) return;
         ed.Close();
         ShowGallery();
-        await Task.CompletedTask;
     }
 
-    /// <summary>Ferme proprement l'éditeur à la fermeture de la fenêtre (bureau).</summary>
-    public void OnAppClosing() => _editor?.AutoSave();
+    /// <summary>Enregistre avant la fermeture de la fenêtre (bureau). Retourne le message d'erreur, ou null.</summary>
+    public string? OnAppClosing() => _editor?.AutoSave();
+
+    public Task<bool> ConfirmUnsavedAsync(string error, string leave) =>
+        ConfirmAsync("Enregistrement impossible",
+            $"L'œuvre n'a pas pu être enregistrée : {error}\n\nSi tu continues, les dernières modifications seront perdues.",
+            leave, "Rester");
+
+    public bool IsDialogOpen => DialogLayer.IsVisible;
 
     // ---------------------------------------------------------------- dialogues
 
