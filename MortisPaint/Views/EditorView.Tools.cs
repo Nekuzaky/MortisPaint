@@ -175,9 +175,9 @@ public partial class EditorView
                 if (_state.SelectKind == SelectKind.Wand)
                     p.Children.Add(MiniSlider("Tolérance", 0, 255, _state.FillTolerance, v => _state.FillTolerance = (int)v, v => $"{v:0}"));
                 p.Children.Add(OptSeparator());
-                p.Children.Add(ActionChip("Tout", () => _engine.Selection.SelectAll()));
-                p.Children.Add(ActionChip("Aucune", () => _engine.Selection.Clear()));
-                p.Children.Add(ActionChip("Inverser", () => _engine.Selection.Invert()));
+                p.Children.Add(ActionChip("Tout", SelCmd("Tout sélectionner", () => _engine.Selection.SelectAll())));
+                p.Children.Add(ActionChip("Aucune", SelCmd("Désélectionner", () => _engine.Selection.Clear())));
+                p.Children.Add(ActionChip("Inverser", SelCmd("Inverser la sélection", () => _engine.Selection.Invert())));
                 p.Children.Add(ActionChip("Effacer", ClearLayerOrSelection));
                 p.Children.Add(ActionChip("Remplir", () => _engine.FillSelection(_state.Color)));
                 break;

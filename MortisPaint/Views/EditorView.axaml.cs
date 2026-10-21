@@ -206,6 +206,8 @@ public partial class EditorView : UserControl
 
     void CommitPending()
     {
+        // Un trait ou un glisser en cours se termine proprement avant toute commande.
+        if (Canvas.IsInteracting) Canvas.FinishInteraction();
         FlushOpacityEdit();
         if (_filter != null) ApplyFilter();
         if (Canvas.Transform != null) Canvas.CommitTransform();
@@ -543,6 +545,8 @@ public partial class EditorView : UserControl
     void Undo()
     {
         if (_filter != null || _text != null) return;
+        // Ctrl+Z en plein trait : le trait est d'abord terminé, puis c'est lui qui est annulé.
+        if (Canvas.IsInteracting) Canvas.FinishInteraction();
         FlushOpacityEdit();
         if (Canvas.Transform != null)
         {
@@ -556,6 +560,7 @@ public partial class EditorView : UserControl
     void Redo()
     {
         if (_filter != null || _text != null) return;
+        if (Canvas.IsInteracting) Canvas.FinishInteraction();
         FlushOpacityEdit();
         if (Canvas.Transform != null) Canvas.CommitTransform();
         var name = _engine.History.RedoName;
@@ -565,7 +570,8 @@ public partial class EditorView : UserControl
     void OnHistoryChanged()
     {
         UpdateUndoButtons();
-        ScheduleTimelapse();
+        // Une sélection ne change pas le dessin : pas de capture du timelapse.
+        if (_engine.History.LastApplied is not SelectionAction) ScheduleTimelapse();
     }
 
     void UpdateUndoButtons()
@@ -636,6 +642,21 @@ public partial class EditorView : UserControl
         action();
     };
 
+    /// <summary>Changement de sélection annulable (Ctrl+Z la rétablit).</summary>
+    Action SelCmd(string name, Action change) => () =>
+    {
+        CommitPending();
+        _engine.Selection.Record(_engine.History, name, change);
+    };
+
+    void SelectLayerContentCmd()
+    {
+        CommitPending();
+        bool found = false;
+        _engine.Selection.Record(_engine.History, "Sélectionner le contenu", () => found = _engine.SelectLayerContent(_state.SelectOp));
+        if (!found) ShowToast("Le calque est vide");
+    }
+
     void BuildMenus()
     {
         var menu = new MenuFlyout();
@@ -660,13 +681,10 @@ public partial class EditorView : UserControl
         menu.Items.Add(filters);
 
         var sel = new MenuItem { Header = "Sélection" };
-        sel.Items.Add(Item("Tout sélectionner", Cmd(() => _engine.Selection.SelectAll()), "Ctrl+A"));
-        sel.Items.Add(Item("Désélectionner", Cmd(() => _engine.Selection.Clear()), "Ctrl+D"));
-        sel.Items.Add(Item("Inverser la sélection", Cmd(() => _engine.Selection.Invert()), "Ctrl+Shift+I"));
-        sel.Items.Add(Item("Sélectionner le contenu du calque", Cmd(() =>
-        {
-            if (!_engine.SelectLayerContent(_state.SelectOp)) ShowToast("Le calque est vide");
-        })));
+        sel.Items.Add(Item("Tout sélectionner", SelCmd("Tout sélectionner", () => _engine.Selection.SelectAll()), "Ctrl+A"));
+        sel.Items.Add(Item("Désélectionner", SelCmd("Désélectionner", () => _engine.Selection.Clear()), "Ctrl+D"));
+        sel.Items.Add(Item("Inverser la sélection", SelCmd("Inverser la sélection", () => _engine.Selection.Invert()), "Ctrl+Shift+I"));
+        sel.Items.Add(Item("Sélectionner le contenu du calque", SelectLayerContentCmd));
         sel.Items.Add(new Separator());
         sel.Items.Add(Item("Effacer le contenu", ClearLayerOrSelection, "Delete"));
         sel.Items.Add(Item("Remplir avec la couleur", Cmd(() => _engine.FillSelection(_state.Color))));
@@ -810,7 +828,7 @@ public partial class EditorView : UserControl
 
     Task ShowHelpAsync() => MainView.Current!.ShowMessageAsync("Raccourcis et gestes",
         "Gestes tactiles : 1 doigt dessine · 2 doigts pour déplacer, zoomer et pivoter · tap 2 doigts = annuler · tap 3 doigts = rétablir · appui long = pipette.\n\n" +
-        "Souris / stylet : molette = zoom · Ctrl+molette = taille · Alt+molette = rotation · clic milieu ou Espace = déplacer · clic droit = pipette · gomme du stylet = gomme. Sélection : Maj = ajouter, Alt = retirer.\n\n" +
+        "Souris / stylet : molette = zoom · Ctrl+molette = taille · Alt+molette = rotation · clic milieu ou Espace = déplacer · clic droit = pipette · gomme du stylet = gomme. Sélection : Maj au début = ajouter, Alt = retirer, Maj pendant le tracé = carré / cercle.\n\n" +
         "Outils : B pinceau · E gomme · S doigt · R flou · G pot · D dégradé · I pipette · U formes · T texte · M sélection · V transformer · H main.\n\n" +
         "Calques : glisser la poignée ⋮⋮ pour réordonner ou ranger dans un dossier · Ctrl/Maj + clic pour en sélectionner plusieurs · Ctrl+G grouper · Ctrl+Maj+N nouveau calque · Ctrl+J dupliquer.\n\n" +
         "Ctrl+Z / Ctrl+Y annuler / rétablir · [ ] taille · X échanger les couleurs · Ctrl+S enregistrer · Ctrl+E exporter en PNG · Ctrl+Maj+E exporter en PSD · Ctrl+A / Ctrl+D sélection · Suppr effacer · Entrée valider · Échap annuler · F miroir de la vue · Ctrl+0 ajuster · , et . image précédente / suivante en animation.");
@@ -845,10 +863,10 @@ public partial class EditorView : UserControl
                 case Key.S: SaveNow(); break;
                 case Key.E when shift: _ = ExportPsdAsync(); break;
                 case Key.E: _ = ExportAsync(SKEncodedImageFormat.Png); break;
-                case Key.I when shift: Cmd(() => _engine.Selection.Invert())(); break;
+                case Key.I when shift: SelCmd("Inverser la sélection", () => _engine.Selection.Invert())(); break;
                 case Key.I: _ = ImportImageAsync(); break;
-                case Key.A: Cmd(() => _engine.Selection.SelectAll())(); break;
-                case Key.D: Cmd(() => _engine.Selection.Clear())(); break;
+                case Key.A: SelCmd("Tout sélectionner", () => _engine.Selection.SelectAll())(); break;
+                case Key.D: SelCmd("Désélectionner", () => _engine.Selection.Clear())(); break;
                 case Key.D0: case Key.NumPad0: Canvas.FitToView(); break;
                 case Key.D1: case Key.NumPad1: Canvas.ZoomActualPixels(); break;
                 case Key.OemPlus: case Key.Add: Canvas.ZoomBy(1.25); break;
@@ -897,7 +915,7 @@ public partial class EditorView : UserControl
                     else if (_filter != null) CancelFilter();
                     else if (_text != null) CancelText();
                     else if (Canvas.Transform != null) Canvas.CancelTransform();
-                    else if (_engine.Selection.HasSelection) _engine.Selection.Clear();
+                    else if (_engine.Selection.HasSelection) SelCmd("Désélectionner", () => _engine.Selection.Clear())();
                     else handled = false;
                     break;
                 default: handled = false; break;

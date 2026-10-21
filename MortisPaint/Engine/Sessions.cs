@@ -627,8 +627,22 @@ public sealed class TransformSession
         var before = _original;
         var after = BitmapUtil.Copy(_layer.Bitmap);
         _layer.Touch();
-        _e.History.Push(new PixelAction("Transformation", _layer, full, before, after));
-        if (_hadSelection) _e.Selection.Transform(Matrix);
+        var pixels = new PixelAction("Transformation", _layer, full, before, after);
+        if (_hadSelection && _e.Selection.Path is { } path)
+        {
+            // La sélection suit le contenu déplacé : Annuler doit la remettre en place avec lui.
+            var selBefore = new SKPath(path);
+            _e.Selection.Transform(Matrix);
+            var selAfter = _e.Selection.Path is { } moved ? new SKPath(moved) : null;
+            _e.History.Push(new CompositeAction("Transformation", new List<IHistoryAction>
+            {
+                pixels, new SelectionAction("Sélection", selBefore, selAfter),
+            }));
+        }
+        else
+        {
+            _e.History.Push(pixels);
+        }
         _floating.Dispose();
         _base.Dispose();
         _e.NotifyLayerPixels(_layer);

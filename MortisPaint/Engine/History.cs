@@ -214,6 +214,9 @@ public sealed class History : IDisposable
 
     public event Action? Changed;
 
+    /// <summary>Action qui vient d'être poussée, annulée ou rétablie (pour savoir ce que <see cref="Changed"/> signale).</summary>
+    public IHistoryAction? LastApplied { get; private set; }
+
     /// <summary>
     /// Mémoire réellement retenue par l'historique : copies de pixels des actions, plus les calques
     /// sortis du document (supprimés, fusionnés...) que les actions gardent en vie, comptés une fois.
@@ -250,6 +253,7 @@ public sealed class History : IDisposable
         }
         Release(dropped);
         _engine.Document.IsDirty = true;
+        LastApplied = action;
         Changed?.Invoke();
     }
 
@@ -261,6 +265,7 @@ public sealed class History : IDisposable
         a.Undo(_engine);
         _redo.Add(a);
         _engine.Document.IsDirty = true;
+        LastApplied = a;
         Changed?.Invoke();
         return true;
     }
@@ -273,6 +278,7 @@ public sealed class History : IDisposable
         a.Redo(_engine);
         _undo.Add(a);
         _engine.Document.IsDirty = true;
+        LastApplied = a;
         Changed?.Invoke();
         return true;
     }
@@ -298,6 +304,7 @@ public sealed class History : IDisposable
         _undo.Clear();
         _redo.Clear();
         Release(all);
+        LastApplied = null;
         Changed?.Invoke();
     }
 

@@ -103,7 +103,7 @@ public partial class EditorView
         Add("Effacer le calque", () => _engine.ClearLayer());
         Add("Remplir avec la couleur", () => _engine.FillSelection(_state.Color));
         Add("Remplir avec la trame", FillWithTone);
-        Add("Sélectionner le contenu du calque", () => _engine.SelectLayerContent(_state.SelectOp));
+        Add("Sélectionner le contenu du calque", SelectLayerContentCmd);
         Add("Retourner horizontalement", () => _engine.FlipLayer(true));
         Add("Retourner verticalement", () => _engine.FlipLayer(false));
         Add("Importer une image…", () => _ = ImportImageAsync());

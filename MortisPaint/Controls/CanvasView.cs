@@ -1273,7 +1273,8 @@ public sealed class CanvasView : Control, ICustomHitTest
             return;
         }
 
-        var cp = ToCanvas(pos);
+        var raw = ToCanvas(pos);
+        var cp = raw;
         _constraint = null;
         if (engine.Ruler.IsActive && tool is ToolKind.Brush or ToolKind.Eraser or ToolKind.Smudge or ToolKind.Blur)
         {
@@ -1298,14 +1299,17 @@ public sealed class CanvasView : Control, ICustomHitTest
                 var brush = tool == ToolKind.Eraser ? state.EraserBrush : state.PaintBrush;
                 _stroke = new BrushStrokeSession(engine, brush, state.Color,
                     tool == ToolKind.Eraser ? StrokeMode.Erase : StrokeMode.Paint, (float)_zoom);
-                _stroke.Add(new InputPoint(cp.X, cp.Y, pressure));
+                // La règle s'applique après la stabilisation : la session reçoit les points bruts.
+                _stroke.Constraint = _constraint;
+                _stroke.Add(new InputPoint(raw.X, raw.Y, pressure));
                 _gesture = Gesture.Tool;
                 break;
             case ToolKind.Smudge:
             case ToolKind.Blur:
                 _pixel = new PixelBrushSession(engine, state.CurrentBrush,
                     tool == ToolKind.Smudge ? PixelBrushMode.Smudge : PixelBrushMode.Blur);
-                _pixel.Add(new InputPoint(cp.X, cp.Y, pressure));
+                _pixel.Constraint = _constraint;
+                _pixel.Add(new InputPoint(raw.X, raw.Y, pressure));
                 _gesture = Gesture.Tool;
                 break;
             case ToolKind.Gradient:
@@ -1351,7 +1355,7 @@ public sealed class CanvasView : Control, ICustomHitTest
             case ToolKind.Blur:
                 foreach (var ip in e.GetIntermediatePoints(this))
                 {
-                    var c = Constrain(ToCanvas(ip.Position));
+                    var c = ToCanvas(ip.Position);
                     var input = new InputPoint(c.X, c.Y, PressureOf(e.Pointer.Type, ip.Properties));
                     _stroke?.Add(input);
                     _pixel?.Add(input);
