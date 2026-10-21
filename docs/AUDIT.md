@@ -1,154 +1,187 @@
-# Audit MortisPaint — 21/10/2026
+# MortisPaint audit — 2026-10-21
 
-Sept audits en lecture seule, un par zone fonctionnelle, sur la branche `feat/mortis-style-et-outils`. Les constats en double entre zones sont fusionnés. **Vérifié** = relu dans le code par moi ; **reproduit** = reproduit par un test. Les autres constats viennent des audits et restent à reproduire.
+Seven read-only audits, one per functional area, run on the `feat/mortis-style-et-outils` branch. Findings duplicated across areas are merged.
 
-Gravité : **Bloquant** (plantage, perte de données, fonction inopérante) · **Majeur** (résultat faux, perte possible, gros coût) · **Mineur**.
+- **Verified**: re-read in the code.
+- **Reproduced**: reproduced by a test.
+- Other findings come straight from the audits.
 
-## Corrections (branche `fix/audit`)
+Severity:
 
-Tous les constats ci-dessous sont corrigés. Avant chaque correction, un test a reproduit le défaut sur le code d'origine ; après la correction, ce même test passe. Sur le code intégré, toutes les suites passent :
+- **Blocker**: crash, data loss, or a feature that does not work.
+- **Major**: wrong result, possible loss, or heavy cost.
+- **Minor**.
 
-| Suite | Contenu | Résultat |
+UI labels are quoted in French, as they appear in the app.
+
+## Fixes (`fix/audit` branch)
+
+Every finding below is fixed:
+
+- Before each fix, a test reproduced the defect on the original code.
+- After the fix, the same test passes.
+
+On the integrated code, every suite passes:
+
+| Suite | Coverage | Result |
 |---|---|---|
-| Harnais de l'interface (Avalonia.Headless) | scénario complet, glisser-déposer des calques, 9 tests des vues | tout passe |
-| Gestes de la toile | stylet et paume, pincements, outils au doigt, Maj, verrou | 83 scénarios |
-| Moteur de pinceau | symétrie, plafond d'opacité, espacement, flou, règle | 36 vérifications |
-| Calques | structure, rendu, annuler/rétablir, 6000 opérations aléatoires | 100 vérifications |
-| Filtres et texte | verrou alpha, bords, aperçu asynchrone, polices de repli | 45 vérifications |
-| Animation et timelapse | GIF, palette, cadence, plafond, miniatures | tout passe |
-| Fichiers | PSD piégés (10 000 fichiers abîmés), aller-retours, enregistrement atomique, EXIF, galerie | tout passe |
+| UI harness (Avalonia.Headless) | full scenario, layer drag and drop, 9 view tests | all pass |
+| Canvas gestures | stylus and palm, pinches, touch tools, Shift, input lock | 83 scenarios |
+| Brush engine | symmetry, opacity cap, spacing, blur, ruler | 36 checks |
+| Layers | structure, rendering, undo/redo, 6,000 random operations | 100 checks |
+| Filters and text | alpha lock, edges, async preview, fallback fonts | 45 checks |
+| Animation and timelapse | GIF, palette, frame rate, cap, thumbnails | all pass |
+| Files | hostile PSDs (10,000 damaged files), round trips, atomic saves, EXIF, gallery | all pass |
 
-Les 19 PSD de test de psd-tools donnent un rendu identique, à l'octet près, à celui d'avant les corrections.
+The 19 psd-tools test PSDs render byte-for-byte identically to before the fixes.
 
-Restent à savoir :
-- **Clavier Android.** La marge qui garde le panneau Texte visible au-dessus du clavier n'a pas été essayée sur un appareil.
-- **Groupe « pass-through » à moins de 100 %.** Quand on le fusionne, le résultat est approché : l'opacité du dossier est appliquée à chaque calque.
-- **Rotation de 90°.** Elle remplace le document, donc elle vide l'historique (après confirmation). Le demi-tour, lui, passe par l'historique.
-- **PSD aplati RVB + 1 canal sans ressource 1053.** Il est lu comme transparent, comme le fait psd-tools. psd-tools n'étant pas installé, ces règles ont été appliquées de mémoire.
+Still open:
 
-## Bloquants (5)
+- **Android keyboard.** The padding that keeps the Text panel above the on-screen keyboard has not been tried on a device.
+- **Pass-through group below 100 %.** Merging such a folder gives an approximate result: the folder opacity is applied to each layer.
+- **90° rotation.** It replaces the document, so it clears the history (after a confirmation). The 180° rotation goes through the history.
+- **Flattened RGB + 1 channel PSD without resource 1053.** It is read as transparent, as psd-tools does. psd-tools is not installed on this machine, so these rules were applied from memory.
 
-| # | Zone | Défaut | Où | Statut |
+## Blockers (5)
+
+| # | Area | Defect | Where | Status |
 |---|---|---|---|---|
-| B1 | Calques | Le glisser-déposer ne déplace jamais rien : `Capture(null)` déclenche `PointerCaptureLost` → `FinishDrag(false)` avant le commit. | `EditorView.Layers.cs:366-372` | **reproduit** |
-| B2 | Interface | Plantage natif environ 300 ms après la fermeture de l'éditeur : le minuteur des miniatures lit des bitmaps déjà libérés (ex. importer une image, puis ←). | `EditorView.axaml.cs:226`, `Layers.cs:160` | vérifié (plantage reproduit par l'audit) |
-| B3 | Fichiers | Supprimer une œuvre efface récursivement `Timelapse/<Id>` avec l'Id **brut** du manifeste : un `.mpaint` avec `"Id":".."` ou un chemin absolu efface toute la galerie ou un dossier arbitraire. | `AppServices.cs:82-83` | vérifié |
-| B4 | Toile | Recadrer sur une sélection hors de la toile : `ArgumentException` dans un `async void` → plantage. | `EditorView.Tools.cs:465`, `CanvasOps.cs:84` | vérifié |
-| B5 | Toile / pinceau | Un 2ᵉ pointeur (paume, doigt) pendant un trait au stylet écrase la session sans la terminer : trait perdu, empreintes laissées dans le tampon puis réinjectées dans un trait ultérieur ; quand la paume se relève, `_gesture` repasse à None. | `CanvasView.cs:531-572, 644, 897-904` | vérifié (2 audits) |
+| B1 | Layers | Drag and drop never moves anything: `Capture(null)` fires `PointerCaptureLost` → `FinishDrag(false)` before the commit. | `EditorView.Layers.cs:366-372` | **reproduced** |
+| B2 | Interface | Native crash about 300 ms after closing the editor: the thumbnail timer reads bitmaps that were already freed (e.g. import an image, then ←). | `EditorView.axaml.cs:226`, `Layers.cs:160` | verified (crash reproduced by the audit) |
+| B3 | Files | Deleting an artwork recursively erases `Timelapse/<Id>` using the **raw** Id from the manifest. A `.mpaint` with `"Id":".."` or an absolute path wipes the whole gallery or an arbitrary folder. | `AppServices.cs:82-83` | verified |
+| B4 | Canvas | Cropping to a selection outside the canvas throws `ArgumentException` in an `async void` handler → crash. | `EditorView.Tools.cs:465`, `CanvasOps.cs:84` | verified |
+| B5 | Canvas / brush | A 2nd pointer (palm, finger) during a stylus stroke overwrites the session without ending it. The stroke is lost, its dabs stay in the buffer and are replayed into a later stroke, and `_gesture` goes back to None when the palm lifts. | `CanvasView.cs:531-572, 644, 897-904` | verified (2 audits) |
 
-## Moteur de pinceau
+## Brush engine
 
-- **Majeur — Symétrie : angle fixe non reflété.** Sans « Suivre la direction », la pointe garde `_b.Angle` au lieu de l'angle transformé : la calligraphie en miroir n'est pas symétrique. `DabRenderer.cs:113, 145` → utiliser `angle`.
-- **Majeur — Pointe carrée tournée : zone sale trop petite** (r+2 au lieu de r·√2) → coins coupés et restes dans le tampon. `DabRenderer.cs:145-165`.
-- **Majeur — Doigt et flou ignorent le verrou alpha** : la couleur s'étale dans le transparent. `Sessions.cs:246-251, 307-313`.
-- **Majeur — Espacement minimal 0,4/zoom** : le trait dépend du zoom (pointillés pour un trait fin tracé dézoomé). `StrokePath.cs:130`.
-- **Majeur — « Pression → opacité » sature** : l'alpha s'accumule empreinte par empreinte (20 % de pression ≈ 84 % d'opacité). `DabRenderer.cs:59`.
-- Mineurs :
-  - 1ʳᵉ empreinte d'un pinceau plat à 0° même avec « Suivre la direction » ;
-  - doigt au bord de la toile qui troue un fond opaque ;
-  - flou en O(d³) avec 7 Mo alloués par empreinte à 400 px ;
-  - doigt et flou à diamètre fixe malgré « Pression → taille » ;
-  - règle concentrique appliquée avant la stabilisation ;
-  - effilement non pris en compte dans l'espacement ;
-  - pointe image depuis un PNG blanc limitée à 25 %.
+- **Major — Symmetry: fixed angle not mirrored.** Without « Suivre la direction » (follow direction), the tip keeps `_b.Angle` instead of the transformed angle, so mirrored calligraphy is not symmetrical. `DabRenderer.cs:113, 145` → use `angle`.
+- **Major — Rotated square tip: dirty rect too small** (r+2 instead of r·√2): corners are cut off and leftovers stay in the buffer. `DabRenderer.cs:145-165`.
+- **Major — Smudge and blur ignore the alpha lock**: colour spreads into transparent areas. `Sessions.cs:246-251, 307-313`.
+- **Major — Minimum spacing of 0.4/zoom**: the stroke depends on the zoom (a thin stroke drawn zoomed out becomes dotted). `StrokePath.cs:130`.
+- **Major — "Pressure → opacity" saturates**: alpha accumulates dab after dab (20 % pressure ≈ 84 % opacity). `DabRenderer.cs:59`.
+- Minor:
+  - first dab of a flat brush at 0° even with « Suivre la direction »;
+  - smudge at the canvas edge punches holes in an opaque background;
+  - blur is O(d³) and allocates 7 MB per dab at 400 px;
+  - smudge and blur keep a fixed diameter despite "Pressure → size";
+  - concentric ruler applied before stabilisation;
+  - taper not taken into account in the spacing;
+  - image tip made from a white PNG capped at 25 %.
 
-## Calques, dossiers, composition, historique
+## Layers, folders, compositing, history
 
-- **Majeur — Glisser sur un dossier qui ne contient que le calque glissé** : la plage est calculée après le retrait → insertion tout en bas, dossier parent rendu non contigu (et `DeleteFolder` supprime alors d'autres calques). `PaintEngine.Advanced.cs:141-158`.
-- **Majeur — « Fusionner les calques visibles » coupe un dossier en deux** (calque fusionné posé à la racine au milieu du dossier). `Advanced.cs:215-221`.
-- **Majeur — Fusion vers le bas d'un calque écrêté en mode non Normal** : l'alpha de la base est mis au carré, les bords semi-transparents s'éclaircissent partout. `PaintEngine.cs:189-202`.
-- **Majeur — Fusion vers le bas entre dossiers** : en animation, « Fusionner » colle l'image 2 dans l'image 1. `PaintEngine.cs:177-181` → refuser si les dossiers diffèrent.
-- **Majeur — Fusion de calques écrêtés / de dossier** : le résultat n'est plus écrêté, les sous-dossiers masqués sont ignorés. `Advanced.cs:187-194`.
-- **Majeur — Mémoire de l'historique sous-estimée** : les calques supprimés ou fusionnés gardés en vie ne sont pas comptés (risque de manque de mémoire sur Android) ; « Retourner la toile » stocke 2 copies pleines par calque. `History.cs:103, 183`.
-- **Majeur — Échantillonnage en animation** : le pot et la pipette « Toile » voient toutes les images ; la baguette voit les pelures d'oignon. `PaintEngine.cs:345, 383`, `Advanced.cs:325` → `new FrameFilter { Frame = CurrentFrame }`.
-- Mineurs :
-  - édition d'opacité en attente (600 ms) non vidée par Ctrl+J, Ctrl+Maj+N, l'œil de dossier et le papier ;
-  - Annuler replie ou déplie les dossiers (`Expanded` restauré) ;
-  - grouper une sélection qui couvre un sous-dossier le dissout ;
-  - Aplatir et Fusionner visibles en animation superposent toutes les images.
+- **Major — Dropping onto a folder that only holds the dragged layer**: the range is computed after removal, so the layer lands at the very bottom and the parent folder becomes non-contiguous (`DeleteFolder` then deletes other layers). `PaintEngine.Advanced.cs:141-158`.
+- **Major — « Fusionner les calques visibles » (merge visible) splits a folder in two**: the merged layer is placed at the root, in the middle of the folder. `Advanced.cs:215-221`.
+- **Major — Merging down a clipped layer in a non-Normal mode**: the base alpha is squared, so semi-transparent edges lighten everywhere. `PaintEngine.cs:189-202`.
+- **Major — Merging down across folders**: in animation, « Fusionner » (merge) pastes frame 2 into frame 1. `PaintEngine.cs:177-181` → refuse when the folders differ.
+- **Major — Merging clipped layers / a folder**: the result is no longer clipped and hidden subfolders are ignored. `Advanced.cs:187-194`.
+- **Major — History memory underestimated**:
+  - deleted or merged layers kept alive by the history are not counted (out-of-memory risk on Android);
+  - « Retourner la toile » (flip canvas) stores 2 full copies per layer.
+  - `History.cs:103, 183`.
+- **Major — Sampling in animation**: the bucket and the « Toile » (canvas) eyedropper see every frame; the magic wand sees the onion skins. `PaintEngine.cs:345, 383`, `Advanced.cs:325` → `new FrameFilter { Frame = CurrentFrame }`.
+- Minor:
+  - pending opacity edit (600 ms) not flushed by Ctrl+J, Ctrl+Shift+N, the folder eye or the paper;
+  - Undo collapses or expands folders (`Expanded` is restored);
+  - grouping a selection that covers a subfolder dissolves it;
+  - Flatten and Merge visible stack every frame in animation mode.
 
-## Toile et outils
+## Canvas and tools
 
-- **Majeur — Outils instantanés au premier doigt** : pot, baguette, texte et pipette agissent avant qu'un pincement ou un tap à 2 doigts soit reconnu (pincer avec le pot remplit la zone). `CanvasView.cs:909-937`.
-- **Majeur — Transformation identité validée** : choisir V puis changer d'outil pousse une entrée pleine toile (128 Mo en 4000²) et évince l'historique. `Sessions.cs:503-514`.
-- **Majeur — Commandes qui contournent `CommitPending`** (transformation ou filtre en cours) : Retourner la toile, Remplir, Sélectionner le contenu, Ctrl+J, Ctrl+T, Ctrl+Maj+N → calque à moitié retourné, filtre non validé qui reparaît. `EditorView.axaml.cs:536-600, 766-769`.
-- **Majeur — Baguette lente sur grande zone bruitée** (rectangles par segment + `Simplify` sur le fil d'interface). `Selection.cs:73-108`.
-- Mineurs :
-  - poignées de règle et de symétrie qui volent un trait commencé à moins de 22 px ;
-  - sélections dégénérées (hauteur nulle) qui bloquent toute peinture ;
-  - Maj sert à la fois à ajouter et à contraindre en carré ;
-  - sélection hors historique ;
-  - Ctrl+Z ou V en plein trait ;
-  - pincement figé avec 3 doigts ;
-  - échelle de transformation qui peut tomber à 0 ;
-  - `SpacePan` bloqué si le relâchement d'Espace est perdu.
+- **Major — Instant tools on the first finger**: the bucket, wand, text and eyedropper act before a pinch or a two-finger tap is recognised (pinching with the bucket fills the area). `CanvasView.cs:909-937`.
+- **Major — Identity transform committed**: choosing V then switching tools pushes a full-canvas entry (128 MB at 4000²) and evicts the history. `Sessions.cs:503-514`.
+- **Major — Commands that bypass `CommitPending`** while a transform or filter is open: flip canvas, fill, select layer content, Ctrl+J, Ctrl+T, Ctrl+Shift+N. Results: a half-flipped layer, or an uncommitted filter that comes back. `EditorView.axaml.cs:536-600, 766-769`.
+- **Major — Slow magic wand on a large noisy area** (one rectangle per run + `Simplify`, on the UI thread). `Selection.cs:73-108`.
+- Minor:
+  - ruler and symmetry handles steal a stroke started within 22 px;
+  - degenerate selections (zero height) block all painting;
+  - Shift both adds to the selection and constrains to a square;
+  - selection changes are not in the history;
+  - Ctrl+Z or V in the middle of a stroke;
+  - pinch frozen with 3 fingers;
+  - transform scale can drop to 0;
+  - `SpacePan` stuck if the Space release is lost.
 
-## Fichiers, formats, galerie
+## Files, formats, gallery
 
-- **Majeur — Perte silencieuse à la fermeture** : si `AutoSave` échoue (stockage plein, manque de mémoire), le toast meurt avec l'éditeur et le document est libéré. `MainView.axaml.cs:94-101`, `EditorView.axaml.cs:216`.
-- **Majeur — Un `.mpaint` importé n'est jamais enregistré** (`IsDirty` reste faux). `GalleryView.axaml.cs:360-365`. *(vérifié)*
-- **Majeur — Tailles lues dans le fichier non bornées** (rectangle de calque PSD, nombre de canaux, nombre de calques, PNG du ZIP) : un PSD de 200 octets peut demander 8 Go. `PsdFile.cs:354-357, 412-419, 533`, `ProjectIO.cs:178-205`.
-- **Majeur — Exceptions non rattrapées dans des handlers `async void`** : suppression avec un JPEG verrouillé, export avec disque plein, export du timelapse. `GalleryView.axaml.cs:245, 308`, `EditorView.axaml.cs:287`.
-- **Majeur — Groupes PSD « pass » (pass-through) rendus isolés** : les ombres en Produit d'un groupe Photoshop deviennent opaques. `PsdFile.cs:383`.
-- Mineurs :
-  - cycle de dossiers A→B→A dans un `.mpaint` = boucle infinie ;
-  - 4ᵉ canal d'un PSD aplati pris pour de la transparence ;
-  - calque « Papier » ajouté à chaque aller-retour PSD ;
-  - PSD construit entièrement en mémoire (échec au-delà de 2 Go, export sur le fil d'interface) ;
-  - orientation EXIF des photos ignorée ;
-  - `settings.json` écrit sans atomicité ;
-  - timelapses orphelins jamais nettoyés.
+- **Major — Silent loss on close**: if `AutoSave` fails (storage full, out of memory), the toast dies with the editor and the document is freed. `MainView.axaml.cs:94-101`, `EditorView.axaml.cs:216`.
+- **Major — An imported `.mpaint` is never saved** (`IsDirty` stays false). `GalleryView.axaml.cs:360-365`. *(verified)*
+- **Major — Sizes read from files are unbounded** (PSD layer rectangle, channel count, layer count, PNGs in the ZIP): a 200-byte PSD can ask for 8 GB. `PsdFile.cs:354-357, 412-419, 533`, `ProjectIO.cs:178-205`.
+- **Major — Uncaught exceptions in `async void` handlers**: deleting with a locked JPEG, exporting to a full disk, exporting the timelapse. `GalleryView.axaml.cs:245, 308`, `EditorView.axaml.cs:287`.
+- **Major — PSD "pass" (pass-through) groups rendered isolated**: Multiply shadows in a Photoshop group turn opaque. `PsdFile.cs:383`.
+- Minor:
+  - folder cycle A→B→A in a `.mpaint` = infinite loop;
+  - 4th channel of a flattened PSD taken as transparency;
+  - a « Papier » (paper) layer added on every PSD round trip;
+  - PSD built entirely in memory (fails above 2 GB, export on the UI thread);
+  - photo EXIF orientation ignored;
+  - `settings.json` written non-atomically;
+  - orphaned timelapses never cleaned up.
 
 ## Animation, timelapse, GIF
 
-- **Majeur — Changer de calque ne redessine pas la toile en animation** (`SetActive` n'invalide pas) → mélange de 2 images à l'écran. `PaintEngine.cs:88-93`. *(vérifié)*
-- **Majeur — Impossible de revenir à l'image 1 depuis un calque de fond** (`GoToFrame` compare au repli de `CurrentFrame`). `Advanced.cs:233, 267`.
-- **Majeur — Export GIF de l'animation** : toutes les images composées en pleine résolution et gardées en mémoire sur le fil d'interface. `EditorView.Animation.cs:234`.
-- **Majeur — Une erreur arrête le timelapse pour toute la session** (`await previous` hors du `try`, seul `IOException` attrapé, `bmp` qui fuit). `Timelapse.cs:39, 57`.
-- **Majeur — 2 compositions pleine résolution après chaque trait** (miniature d'image + capture du timelapse), et `RebuildTimeline` recrée tous les boutons. `Animation.cs:146`, `EditorView.axaml.cs:66`.
-- **Majeur — Le dossier du timelapse grossit sans limite** (un JPEG par action, jamais élagué). `Timelapse.cs:33`.
-- Mineurs :
-  - clé des miniatures qui ignore le fond et les propriétés ;
-  - `OnionSkin=false` enregistré si on ferme pendant la lecture ;
-  - captures du timelapse qui montrent les pelures d'oignon ;
-  - numérotation écrasée après un trou ;
-  - `Clear` non synchronisé ;
-  - images déformées après un changement de taille de toile ;
-  - palette GIF au centre des cases (le blanc devient 252) ;
-  - cadence arrondie (24 i/s → 25).
-- Vérifié correct : structure GIF et LZW (Pillow les décode), pelures aux bords, `DuplicateFrame` avec sous-dossiers.
+- **Major — Changing layer does not redraw the canvas in animation** (`SetActive` does not invalidate): 2 frames mixed on screen. `PaintEngine.cs:88-93`. *(verified)*
+- **Major — Cannot go back to frame 1 from a background layer** (`GoToFrame` compares against the `CurrentFrame` fallback). `Advanced.cs:233, 267`.
+- **Major — Animation GIF export**: every frame composited at full resolution and kept in memory, on the UI thread. `EditorView.Animation.cs:234`.
+- **Major — One error stops the timelapse for the whole session** (`await previous` outside the `try`, only `IOException` caught, `bmp` leaks). `Timelapse.cs:39, 57`.
+- **Major — 2 full-resolution compositions after every stroke** (frame thumbnail + timelapse capture), and `RebuildTimeline` recreates every button. `Animation.cs:146`, `EditorView.axaml.cs:66`.
+- **Major — The timelapse folder grows without limit** (one JPEG per action, never pruned). `Timelapse.cs:33`.
+- Minor:
+  - thumbnail key ignores the background and layer properties;
+  - `OnionSkin=false` saved when closing during playback;
+  - timelapse captures show the onion skins;
+  - numbering overwritten after a gap;
+  - `Clear` not synchronised;
+  - frames distorted after a canvas size change;
+  - GIF palette taken from box centres (white becomes 252);
+  - frame rate rounded (24 fps → 25).
+- Verified correct: GIF structure and LZW (Pillow decodes them), onion skins at the edges, `DuplicateFrame` with subfolders.
 
-## Filtres, trames, texte
+## Filters, tones, text
 
-- **Majeur — Verrou alpha des filtres** : `DstIn` met l'alpha au carré sur toute la toile, hors sélection et hors historique. `Filters.cs:438-444`.
-- **Majeur — Aperçu de filtre lent** : toute la toile, sur le fil d'interface (demi-teinte, flou de mouvement : plusieurs secondes sur Android). `Filters.cs:423-446`.
-- **Majeur — Bords transparents** après un flou gaussien ou un flou de mouvement (`Decal`). `Filters.cs:136, 289`.
-- **Majeur — Recadrage trop grand de 4 px** (marge de 2 px de `Selection.Bounds`). `Tools.cs:474`.
-- **Majeur — Raccourcis actifs quand le focus a quitté le champ texte** : Retour arrière efface le calque texte qu'il vient de créer. `EditorView.axaml.cs:743, 796`. *(2 audits)*
-- **Majeur — La désactivation Android valide sans prévenir** le filtre, le texte ou la transformation en cours. `MainView.axaml.cs:49`.
-- **Majeur — Taille de toile jusqu'à 8192²** sans garde mémoire (la galerie limite à 6000). `Tools.cs:414`.
-- Mineurs :
-  - liseré autour des sélections filtrées ;
-  - bande effacée par la mosaïque ;
-  - demi-teinte trop sombre ;
-  - aperçu du texte qui hérite de l'opacité du calque ;
-  - pas de police de repli (japonais, emoji) ;
-  - zoom bloqué pendant un filtre ;
-  - un filtre neutre crée quand même une entrée d'historique.
+- **Major — Filter alpha lock**: `DstIn` squares the alpha over the whole canvas, outside the selection and outside the history. `Filters.cs:438-444`.
+- **Major — Slow filter preview**: whole canvas, on the UI thread (halftone, motion blur: several seconds on Android). `Filters.cs:423-446`.
+- **Major — Transparent edges** after a Gaussian or motion blur (`Decal`). `Filters.cs:136, 289`.
+- **Major — Crop 4 px too large** (2 px margin of `Selection.Bounds`). `Tools.cs:474`.
+- **Major — Shortcuts active once focus has left the text field**: Backspace clears the text layer it just created. `EditorView.axaml.cs:743, 796`. *(2 audits)*
+- **Major — Android deactivation silently commits** the open filter, text or transform. `MainView.axaml.cs:49`.
+- **Major — Canvas size up to 8192²** without a memory guard (the gallery caps at 6000). `Tools.cs:414`.
+- Minor:
+  - halo around filtered selections;
+  - band erased by the mosaic;
+  - halftone too dark;
+  - text preview inherits the layer opacity;
+  - no fallback font (Japanese, emoji);
+  - zoom blocked while a filter is open;
+  - a neutral filter still creates a history entry.
 
 ## Interface
 
-- **Majeur — Fenêtre de référence hors écran** après rotation ou redimensionnement (position bornée seulement pendant le glisser). `Reference.cs:37-64`.
-- Mineurs :
-  - Maj+clic sélectionne des calques cachés dans des dossiers repliés ;
-  - abonnements de `MainView` jamais retirés ;
-  - images (miniatures, référence 2048²) jamais libérées ;
-  - bouton Référence qui reste actif après Retour ;
-  - saut de l'image de référence après un pincement ;
-  - pas de noms d'accessibilité ;
-  - « Réinitialiser » sans effet sur un pinceau image ;
-  - clavier Android qui pourrait masquer le panneau Texte (Android 15, à confirmer).
+- **Major — Reference window off screen** after a rotation or resize (position only clamped while dragging). `Reference.cs:37-64`.
+- Minor:
+  - Shift+click selects layers hidden in collapsed folders;
+  - `MainView` subscriptions never removed;
+  - images (thumbnails, 2048² reference) never freed;
+  - Reference button stays active after Back;
+  - reference image jumps after a pinch;
+  - no accessibility names;
+  - « Réinitialiser » (reset) has no effect on an image brush;
+  - the Android keyboard may hide the Text panel (Android 15, to be confirmed).
 
-## Ce qui a été vérifié correct
+## Verified correct
 
-Matrice de vue (zoom, rotation, miroir, pincement) ; gestes tactiles (taps 2 et 3 doigts, appui long) ; contiguïté des dossiers pour la plupart des opérations ; restauration par `DocState` ; libération des calques par l'historique ; composition (écrêtage sur dossier, dossiers masqués, pelures) ; matrices de `CanvasOps` ; conformité du PSD écrit ; ordre BGRA/RGBA ; `MapRgb` ; trames ; encodeur GIF ; `ReplaceDocument` (pas de closure sur l'ancien moteur) ; disposition responsive ; ordre de `HandleBack`.
+- View matrix (zoom, rotation, mirror, pinch).
+- Touch gestures (two- and three-finger taps, long press).
+- Folder contiguity for most operations.
+- Restoring through `DocState`.
+- Layers freed by the history.
+- Compositing (clipping onto a folder, hidden folders, onion skins).
+- `CanvasOps` matrices.
+- Conformance of the written PSD.
+- BGRA/RGBA order.
+- `MapRgb`.
+- Tones.
+- GIF encoder.
+- `ReplaceDocument` (no closure over the old engine).
+- Responsive layout.
+- `HandleBack` order.
