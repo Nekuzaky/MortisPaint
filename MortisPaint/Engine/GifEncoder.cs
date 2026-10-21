@@ -8,12 +8,17 @@ namespace MortisPaint.Engine;
 /// <summary>
 /// Encodeur GIF animé écrit à la main : palette de 256 couleurs par image (coupe médiane
 /// sur un histogramme RVB 5 bits) et compression LZW. Utilisé pour le timelapse et l'animation.
+/// Les images sont écrites au fil de l'eau : seule l'image en cours est en mémoire.
 /// </summary>
 public sealed class GifEncoder : IDisposable
 {
     readonly Stream _out;
     readonly int _width, _height;
     bool _headerWritten;
+
+    // Histogramme et sommes des vraies couleurs par case (réutilisés d'une image à l'autre).
+    readonly long[] _hist = new long[32768];
+    readonly long[] _sumR = new long[32768], _sumG = new long[32768], _sumB = new long[32768];
 
     public GifEncoder(Stream output, int width, int height)
     {
@@ -22,7 +27,29 @@ public sealed class GifEncoder : IDisposable
         _height = height;
     }
 
-    /// <summary>Ajoute une image (redimensionnée au besoin) affichée <paramref name="delayCs"/> centièmes de seconde.</summary>
+    /// <summary>
+    /// Délais (centièmes de seconde) de <paramref name="count"/> images à <paramref name="fps"/> images/s.
+    /// L'erreur d'arrondi est reportée d'une image à l'autre : à 24 i/s on obtient 4, 4, 5, 4…
+    /// (24 images = 1 s pile) au lieu de 4 partout (25 i/s).
+    /// </summary>
+    public static int[] FrameDelays(int count, double fps)
+    {
+        var delays = new int[Math.Max(0, count)];
+        double step = 100.0 / (fps > 0 ? fps : 1);
+        long previous = 0;
+        for (int i = 0; i < delays.Length; i++)
+        {
+            long t = (long)Math.Round((i + 1) * step, MidpointRounding.AwayFromZero);
+            delays[i] = (int)Math.Clamp(t - previous, 2, 65535);
+            previous = t;
+        }
+        return delays;
+    }
+
+    /// <summary>
+    /// Ajoute une image affichée <paramref name="delayCs"/> centièmes de seconde. Une image d'une autre
+    /// taille est ajustée dans le cadre en gardant ses proportions (bandes blanches au besoin).
+    /// </summary>
     public void AddFrame(SKBitmap frame, int delayCs)
     {
         if (!_headerWritten) WriteHeader();
@@ -46,12 +73,7 @@ public sealed class GifEncoder : IDisposable
         WriteShort(0); WriteShort(0);
         WriteShort(_width); WriteShort(_height);
         _out.WriteByte(0x87);
-        for (int i = 0; i < 256; i++)
-        {
-            _out.WriteByte(palette[i * 3]);
-            _out.WriteByte(palette[i * 3 + 1]);
-            _out.WriteByte(palette[i * 3 + 2]);
-        }
+        _out.Write(palette, 0, palette.Length);
         WriteLzw(indices);
     }
 
@@ -74,7 +96,7 @@ public sealed class GifEncoder : IDisposable
 
     byte[] Pixels(SKBitmap frame)
     {
-        using var sized = frame.Width == _width && frame.Height == _height ? null : BitmapUtil.Scaled(frame, _width, _height);
+        using var sized = frame.Width == _width && frame.Height == _height ? null : Fitted(frame);
         var src = sized ?? frame;
         var rgba = new byte[_width * _height * 4];
         var info = new SKImageInfo(_width, _height, SKColorType.Rgba8888, SKAlphaType.Unpremul);
@@ -95,6 +117,31 @@ public sealed class GifEncoder : IDisposable
             rgba[i + 3] = 255;
         }
         return rgba;
+    }
+
+    /// <summary>
+    /// Image ajustée dans le cadre du GIF sans déformation, centrée sur fond blanc (ex. timelapse
+    /// d'une toile redimensionnée en cours de route).
+    /// </summary>
+    SKBitmap Fitted(SKBitmap frame)
+    {
+        var dst = new SKBitmap(BitmapUtil.Info(_width, _height));
+        dst.Erase(SKColors.White);
+        float s = MathF.Min(_width / (float)frame.Width, _height / (float)frame.Height);
+        float w = frame.Width * s, h = frame.Height * s;
+        // Mêmes proportions aux arrondis près : on remplit tout le cadre (pas de liseré blanc).
+        if (_width - w <= Math.Max(1f, _width * 0.015f) && _height - h <= Math.Max(1f, _height * 0.015f))
+        {
+            w = _width;
+            h = _height;
+        }
+        using var canvas = new SKCanvas(dst);
+        using var pix = frame.PeekPixels();
+        using var img = SKImage.FromPixels(pix);
+        using var paint = new SKPaint();
+        canvas.DrawImage(img, SKRect.Create((_width - w) / 2, (_height - h) / 2, w, h),
+            new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear), paint);
+        return dst;
     }
 
     sealed class Box
@@ -120,12 +167,25 @@ public sealed class GifEncoder : IDisposable
         public int Span => Math.Max(RMax - RMin, Math.Max(GMax - GMin, BMax - BMin));
     }
 
-    /// <summary>Coupe médiane sur 32 768 cases ; renvoie la palette et une table case → index.</summary>
-    static (byte[] Palette, byte[] Lookup) Quantize(byte[] rgba)
+    /// <summary>
+    /// Coupe médiane sur 32 768 cases ; renvoie la palette (RVB) et une table case → index.
+    /// La couleur d'une boîte est la moyenne des vraies couleurs de ses pixels (le blanc reste 255,
+    /// et non le centre de sa case, 252).
+    /// </summary>
+    (byte[] Palette, byte[] Lookup) Quantize(byte[] rgba)
     {
-        var hist = new long[32768];
+        var hist = _hist;
+        Array.Clear(hist);
+        Array.Clear(_sumR);
+        Array.Clear(_sumG);
+        Array.Clear(_sumB);
         for (int i = 0; i < rgba.Length; i += 4)
-            hist[((rgba[i] >> 3) << 10) | ((rgba[i + 1] >> 3) << 5) | (rgba[i + 2] >> 3)]++;
+        {
+            int r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
+            int c = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+            hist[c]++;
+            _sumR[c] += r; _sumG[c] += g; _sumB[c] += b;
+        }
         var root = new Box();
         for (int c = 0; c < hist.Length; c++)
             if (hist[c] > 0) root.Colors.Add(c);
@@ -160,14 +220,13 @@ public sealed class GifEncoder : IDisposable
             long r = 0, g = 0, b = 0, n = 0;
             foreach (int c in boxes[i].Colors)
             {
-                long h = hist[c];
-                r += ((c >> 10) * 8 + 4) * h; g += (((c >> 5) & 31) * 8 + 4) * h; b += ((c & 31) * 8 + 4) * h; n += h;
+                r += _sumR[c]; g += _sumG[c]; b += _sumB[c]; n += hist[c];
                 lookup[c] = (byte)i;
             }
             if (n == 0) n = 1;
-            palette[i * 3] = (byte)Math.Min(255, r / n);
-            palette[i * 3 + 1] = (byte)Math.Min(255, g / n);
-            palette[i * 3 + 2] = (byte)Math.Min(255, b / n);
+            palette[i * 3] = (byte)Math.Min(255, (r + n / 2) / n);
+            palette[i * 3 + 1] = (byte)Math.Min(255, (g + n / 2) / n);
+            palette[i * 3 + 2] = (byte)Math.Min(255, (b + n / 2) / n);
         }
         return (palette, lookup);
     }
@@ -179,7 +238,9 @@ public sealed class GifEncoder : IDisposable
         const int minCode = 8;
         _out.WriteByte(minCode);
         int clear = 1 << minCode, end = clear + 1;
-        var block = new List<byte>(255);
+        // Sous-blocs de 255 octets au plus, précédés de leur longueur.
+        var block = new byte[256];
+        int blockLen = 0;
         int bitBuf = 0, bitCount = 0;
 
         void Emit(int code, int size)
@@ -188,19 +249,19 @@ public sealed class GifEncoder : IDisposable
             bitCount += size;
             while (bitCount >= 8)
             {
-                block.Add((byte)(bitBuf & 0xFF));
+                block[1 + blockLen++] = (byte)(bitBuf & 0xFF);
                 bitBuf >>= 8;
                 bitCount -= 8;
-                if (block.Count == 255) Flush();
+                if (blockLen == 255) Flush();
             }
         }
 
         void Flush()
         {
-            if (block.Count == 0) return;
-            _out.WriteByte((byte)block.Count);
-            foreach (var b in block) _out.WriteByte(b);
-            block.Clear();
+            if (blockLen == 0) return;
+            block[0] = (byte)blockLen;
+            _out.Write(block, 0, blockLen + 1);
+            blockLen = 0;
         }
 
         var dict = new Dictionary<int, int>();
@@ -235,7 +296,7 @@ public sealed class GifEncoder : IDisposable
         // Même règle que pour les autres codes : le décodeur élargit ses codes avant le code de fin.
         if (next >= (1 << codeSize) && codeSize < 12) codeSize++;
         Emit(end, codeSize);
-        if (bitCount > 0) block.Add((byte)(bitBuf & 0xFF));
+        if (bitCount > 0) block[1 + blockLen++] = (byte)(bitBuf & 0xFF);
         Flush();
         _out.WriteByte(0);
     }
