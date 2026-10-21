@@ -16,25 +16,75 @@ public sealed partial class PaintEngine
 
     // ================================================================ dossiers
 
-    /// <summary>Range les calques donnés dans un nouveau dossier, à la place du plus haut d'entre eux.</summary>
+    /// <summary>
+    /// Range les calques donnés dans un nouveau dossier, créé dans leur dossier commun, à la place du plus haut.
+    /// Un sous-dossier entièrement sélectionné y passe tel quel (il n'est pas dissous).
+    /// </summary>
     public LayerFolder? GroupLayers(IReadOnlyCollection<Layer> selection, string? name = null)
     {
         var layers = Document.Layers;
         var sel = layers.Where(selection.Contains).ToList();
         if (sel.Count == 0) return null;
-        var anchor = sel[^1];
+        var set = new HashSet<Layer>(sel);
+        var parent = CommonFolder(sel);
         var active = ActiveLayer;
-        var folder = new LayerFolder(name ?? Document.NextFolderName()) { Parent = anchor.Folder };
+        var folder = new LayerFolder(name ?? Document.NextFolderName()) { Parent = parent };
+        var covered = new Dictionary<LayerFolder, bool>();
+        bool Covered(LayerFolder f)
+        {
+            if (covered.TryGetValue(f, out var c)) return c;
+            var (s, e) = Document.FolderRange(f);
+            for (int k = s; k < e; k++)
+                if (!set.Contains(layers[k])) return covered[f] = false;
+            return covered[f] = true;
+        }
+        var direct = new List<Layer>();
+        var moved = new HashSet<LayerFolder>();
+        foreach (var l in sel)
+        {
+            // Le plus haut sous-dossier entièrement sélectionné qui contient ce calque.
+            LayerFolder? keep = null;
+            for (var f = l.Folder; f != null && f != parent; f = f.Parent)
+                if (Covered(f)) keep = f;
+            if (keep != null) moved.Add(keep);
+            else direct.Add(l);
+        }
+        int insertAt = LevelSlotAbove(sel[^1], parent) - sel.Count;
         Structure("Grouper dans un dossier", () =>
         {
-            foreach (var l in sel)
-                if (l != anchor) layers.Remove(l);
-            int at = layers.IndexOf(anchor);
-            layers.InsertRange(at, sel.Where(l => l != anchor));
-            foreach (var l in sel) l.Folder = folder;
+            foreach (var l in sel) layers.Remove(l);
+            layers.InsertRange(insertAt, sel);
+            foreach (var l in direct) l.Folder = folder;
+            foreach (var f in moved) f.Parent = folder;
             Document.ActiveIndex = layers.IndexOf(active);
         });
         return folder;
+    }
+
+    /// <summary>Dossier le plus profond qui contient tous les calques donnés (null = racine).</summary>
+    static LayerFolder? CommonFolder(IEnumerable<Layer> layers)
+    {
+        bool first = true;
+        LayerFolder? common = null;
+        foreach (var l in layers)
+        {
+            if (first) { common = l.Folder; first = false; continue; }
+            while (common != null && !l.IsIn(common)) common = common.Parent;
+        }
+        return common;
+    }
+
+    /// <summary>
+    /// Index juste au-dessus de l'unité de <paramref name="level"/> qui contient <paramref name="layer"/>
+    /// (le calque lui-même, ou le sous-dossier direct de <paramref name="level"/> qui le contient).
+    /// Insérer là ne coupe aucun dossier.
+    /// </summary>
+    int LevelSlotAbove(Layer layer, LayerFolder? level)
+    {
+        if (layer.Folder == level) return Document.Layers.IndexOf(layer) + 1;
+        var child = layer.Folder!;
+        while (child.Parent != level) child = child.Parent!;
+        return Document.FolderRange(child).End;
     }
 
     /// <summary>Supprime le dossier mais garde son contenu, remonté d'un niveau.</summary>
@@ -78,6 +128,7 @@ public sealed partial class PaintEngine
             var copy = new LayerFolder(f == folder ? name ?? f.Name + " (copie)" : f.Name)
             {
                 Visible = f.Visible, Opacity = f.Opacity, BlendMode = f.BlendMode, Expanded = f.Expanded,
+                PassThrough = f.PassThrough,
             };
             map[f] = copy;
             copy.Parent = f.Parent == null || f == folder ? folder.Parent : Map(f.Parent);
@@ -116,18 +167,23 @@ public sealed partial class PaintEngine
         var active = ActiveLayer;
         Structure("Déplacer", () =>
         {
-            List<Layer> block;
+            int bs, count;
             if (layer != null)
             {
-                block = new List<Layer> { layer };
+                bs = layers.IndexOf(layer);
+                count = 1;
             }
             else
             {
                 var (s, e) = Document.FolderRange(folder!);
-                block = layers.GetRange(s, e - s);
+                bs = s;
+                count = e - s;
             }
-            foreach (var l in block) layers.Remove(l);
+            if (bs < 0 || count <= 0) return;
+            var block = layers.GetRange(bs, count);
 
+            // Position calculée avant le retrait du bloc : la cible peut ne contenir que lui
+            // (sa plage serait alors vide et l'insertion se ferait tout en bas).
             int insertAt;
             LayerFolder? parent;
             if (targetLayer != null)
@@ -155,6 +211,10 @@ public sealed partial class PaintEngine
                         break;
                 }
             }
+            // Puis ramenée aux index d'après le retrait.
+            if (insertAt >= bs + count) insertAt -= count;
+            else if (insertAt > bs) insertAt = bs;
+            layers.RemoveRange(bs, count);
             layers.InsertRange(Math.Clamp(insertAt, 0, layers.Count), block);
             if (layer != null) layer.Folder = parent;
             else folder!.Parent = parent;
@@ -178,74 +238,160 @@ public sealed partial class PaintEngine
         });
     }
 
-    /// <summary>Fusionne des calques en un seul, à la place du plus haut.</summary>
+    /// <summary>
+    /// Fusionne des calques en un seul, dans leur dossier commun, à la place du plus haut.
+    /// En animation, seuls ceux de l'image du plus haut sont fusionnés.
+    /// </summary>
     public void MergeLayers(IReadOnlyCollection<Layer> selection, string actionName = "Fusionner les calques")
     {
         var sel = Document.Layers.Where(selection.Contains).ToList();
+        if (sel.Count == 0) return;
+        if (Document.AnimationEnabled)
+        {
+            // On ne colle pas deux images (ou une image et les fonds) ensemble.
+            var frame = Document.TopFolder(sel[^1]);
+            sel = sel.Where(l => Document.TopFolder(l) == frame).ToList();
+        }
         if (sel.Count < 2) return;
-        var top = sel[^1];
-        var merged = new Layer(Width, Height, top.Name) { Folder = top.Folder };
-        // Composition de la seule sélection, sans tenir compte des dossiers (comme une fusion Photoshop).
-        var saved = sel.Select(l => l.Folder).ToList();
-        try
+        MergeInto(sel, sel[^1].Name, actionName);
+    }
+
+    /// <summary>
+    /// Fusionne tous les calques affichés (les calques masqués sont gardés).
+    /// En animation, seulement ceux de l'image courante : les fonds et les autres images restent.
+    /// </summary>
+    public void MergeVisible()
+    {
+        var frame = CurrentFrame;
+        var visible = new List<Layer>();
+        for (int i = 0; i < Document.Layers.Count; i++)
+            if (Document.Layers[i].IsIn(frame) && IsDisplayed(i)) visible.Add(Document.Layers[i]);
+        if (visible.Count < 2) return;
+        MergeInto(visible, "Calques fusionnés", "Fusionner les calques visibles");
+    }
+
+    /// <summary>
+    /// Remplace les calques donnés (de bas en haut) par un seul, placé dans leur dossier commun le plus profond,
+    /// juste au-dessus de l'unité qui contient le plus haut : aucun dossier n'est coupé. La composition respecte
+    /// les sous-dossiers (masqués, mode, opacité, pass-through) et l'écrêtage ; le dossier commun s'applique encore
+    /// au résultat. Des calques tous écrêtés sur une même base non fusionnée donnent un calque écrêté.
+    /// </summary>
+    void MergeInto(List<Layer> sel, string layerName, string actionName)
+    {
+        var layers = Document.Layers;
+        var set = new HashSet<Layer>(sel);
+        var container = CommonFolder(sel);
+        var baseUnit = ClipBase(layers.IndexOf(sel[0]));
+        bool clipped = sel.All(l => l.Clipping)
+            && (baseUnit.Layer != null || baseUnit.Folder != null)
+            && !(baseUnit.Layer != null && set.Contains(baseUnit.Layer))
+            && sel.All(l => ClipBase(layers.IndexOf(l)) == baseUnit);
+        var merged = new Layer(Width, Height, layerName) { Folder = container, Clipping = clipped };
+        using (var c = new SKCanvas(merged.Bitmap))
         {
-            foreach (var l in sel) l.Folder = null;
-            using var c = new SKCanvas(merged.Bitmap);
-            Compositor.DrawLayers(c, sel, null);
+            if (clipped)
+            {
+                // Mêmes base et niveau : on les compose entre eux, l'écrêtage du résultat fera le reste.
+                foreach (var l in sel)
+                {
+                    if (!l.Visible || l.Opacity <= 0f) continue;
+                    using var p = LayerPaint(l);
+                    c.DrawBitmap(l.Bitmap, 0, 0, p);
+                }
+            }
+            else
+            {
+                Compositor.DrawSubset(c, layers, container, set.Contains);
+            }
         }
-        finally
-        {
-            for (int i = 0; i < sel.Count; i++) sel[i].Folder = saved[i];
-        }
+        int insertAt = LevelSlotAbove(sel[^1], container) - sel.Count;
         Structure(actionName, () =>
         {
-            int at = Document.Layers.IndexOf(top);
-            Document.Layers[at] = merged;
-            foreach (var l in sel)
-                if (l != top) Document.Layers.Remove(l);
-            Document.ActiveIndex = Document.Layers.IndexOf(merged);
+            foreach (var l in sel) layers.Remove(l);
+            layers.Insert(insertAt, merged);
+            Document.ActiveIndex = insertAt;
         });
     }
 
-    /// <summary>Fusionne tous les calques visibles (les calques masqués sont gardés).</summary>
-    public void MergeVisible()
+    /// <summary>
+    /// Base d'écrêtage du calque d'index donné, comme dans le compositeur : l'unité du même niveau juste sous
+    /// les calques écrêtés (calque ou sous-dossier), ou le plus bas de ces calques en bas du niveau.
+    /// (null, null) pour un calque non écrêté ou sans base.
+    /// </summary>
+    (Layer? Layer, LayerFolder? Folder) ClipBase(int index)
     {
-        var visible = Document.Layers.Where(l => l.IsEffectivelyVisible).ToList();
-        if (visible.Count < 2) return;
-        var merged = new Layer(Compositor.Flatten(Document, includePaper: false), "Calques fusionnés");
-        Structure("Fusionner les calques visibles", () =>
+        var layers = Document.Layers;
+        if (index < 0 || !layers[index].Clipping) return (null, null);
+        var level = layers[index].Folder;
+        Layer? lowest = null;
+        for (int j = index - 1; j >= 0; j--)
         {
-            int at = Document.Layers.IndexOf(visible[^1]);
-            Document.Layers[at] = merged;
-            foreach (var l in visible.Take(visible.Count - 1)) Document.Layers.Remove(l);
-            Document.ActiveIndex = Document.Layers.IndexOf(merged);
-        });
+            var b = layers[j];
+            if (b.Folder == level)
+            {
+                if (!b.Clipping) return (b, null);
+                lowest = b;
+                continue;
+            }
+            if (!b.IsIn(level)) break;
+            var child = b.Folder!;
+            while (child.Parent != level) child = child.Parent!;
+            return (null, child);
+        }
+        return (lowest, null);
+    }
+
+    /// <summary>Vrai si le calque d'index donné apparaît dans l'image (lui, ses dossiers et sa base d'écrêtage visibles).</summary>
+    bool IsDisplayed(int index)
+    {
+        var l = Document.Layers[index];
+        if (!l.Visible || l.Opacity <= 0f) return false;
+        for (var f = l.Folder; f != null; f = f.Parent)
+            if (!f.Visible || f.Opacity <= 0f) return false;
+        var (bl, bf) = ClipBase(index);
+        if (bl != null) return bl.Visible && bl.Opacity > 0f;
+        if (bf != null) return bf.Visible && bf.Opacity > 0f;
+        return true;
     }
 
     // ================================================================ animation
 
-    /// <summary>Image courante (dossier de premier niveau du calque actif) en mode animation.</summary>
+    LayerFolder? _lastFrame;
+
+    /// <summary>
+    /// Image courante (dossier de premier niveau du calque actif) en mode animation.
+    /// Sur un calque de fond, c'est la dernière image affichée (à défaut la première).
+    /// </summary>
     public LayerFolder? CurrentFrame
     {
         get
         {
             if (!Document.AnimationEnabled) return null;
-            return Document.TopFolder(ActiveLayer) ?? Document.Frames().FirstOrDefault();
+            var top = Document.TopFolder(ActiveLayer);
+            if (top != null) return _lastFrame = top;
+            var frames = Document.Frames();
+            return _lastFrame != null && frames.Contains(_lastFrame) ? _lastFrame : frames.FirstOrDefault();
         }
     }
 
-    public FrameFilter? CurrentFrameFilter()
+    public FrameFilter? CurrentFrameFilter() => CurrentFrameFilter(Document.OnionSkin);
+
+    /// <summary>
+    /// Filtre de l'image courante (null hors animation). Sans pelures d'oignon pour échantillonner
+    /// la toile (pot, pipette, baguette) ou pour une capture.
+    /// </summary>
+    public FrameFilter? CurrentFrameFilter(bool withOnion)
     {
         var cur = CurrentFrame;
         if (cur == null) return null;
+        if (!withOnion) return new FrameFilter { Frame = cur };
         var frames = Document.Frames();
         int i = frames.IndexOf(cur);
-        bool onion = Document.OnionSkin;
         return new FrameFilter
         {
             Frame = cur,
-            OnionPrev = onion && i > 0 ? frames[i - 1] : null,
-            OnionNext = onion && i >= 0 && i < frames.Count - 1 ? frames[i + 1] : null,
+            OnionPrev = i > 0 ? frames[i - 1] : null,
+            OnionNext = i >= 0 && i < frames.Count - 1 ? frames[i + 1] : null,
             OnionOpacity = Document.OnionOpacity,
         };
     }
@@ -264,7 +410,8 @@ public sealed partial class PaintEngine
     {
         var (start, end) = Document.FolderRange(frame);
         if (end <= start) return;
-        if (CurrentFrame == frame) return;
+        // On compare l'image du calque actif, pas CurrentFrame : sur un calque de fond, celle-ci n'est qu'un repli.
+        if (Document.TopFolder(ActiveLayer) == frame) return;
         Document.ActiveIndex = end - 1;
         NotifyStructure();
     }
@@ -322,7 +469,8 @@ public sealed partial class PaintEngine
     public bool SelectByColor(int x, int y, int tolerance, bool sampleAll, SelectionOp op)
     {
         if (x < 0 || y < 0 || x >= Width || y >= Height) return false;
-        SKBitmap? flat = sampleAll ? Compositor.Flatten(Document, includePaper: true, CurrentFrameFilter()) : null;
+        // « Toile » en animation : l'image courante seulement, sans pelures d'oignon.
+        SKBitmap? flat = sampleAll ? Compositor.Flatten(Document, includePaper: true, CurrentFrameFilter(withOnion: false)) : null;
         try
         {
             var mask = FloodFill.ComputeMask(flat ?? ActiveLayer.Bitmap, x, y, tolerance, 0, out var bounds);

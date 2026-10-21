@@ -62,7 +62,11 @@ public readonly record struct LayerProps(
     string Name, bool Visible, float Opacity, LayerBlendMode BlendMode, bool Clipping, bool AlphaLock, LayerFolder? Folder);
 
 public readonly record struct FolderProps(
-    string Name, bool Visible, float Opacity, LayerBlendMode BlendMode, bool Expanded, LayerFolder? Parent);
+    string Name, bool Visible, float Opacity, LayerBlendMode BlendMode, bool Expanded, LayerFolder? Parent)
+{
+    /// <summary>Dossier « pass-through » (voir <see cref="LayerFolder.PassThrough"/>).</summary>
+    public bool PassThrough { get; init; }
+}
 
 /// <summary>
 /// Dossier de calques. Les calques restent dans une liste plate (de bas en haut) :
@@ -77,7 +81,13 @@ public sealed class LayerFolder
     public bool Visible { get; set; } = true;
     public float Opacity { get; set; } = 1f;
     public LayerBlendMode BlendMode { get; set; } = LayerBlendMode.Normal;
+    /// <summary>Déplié dans le panneau des calques (état d'interface, hors historique).</summary>
     public bool Expanded { get; set; } = true;
+    /// <summary>
+    /// « Pass-through » : les calques du dossier se composent directement sur ce qui est dessous
+    /// (l'opacité du dossier s'applique à chacun, son mode est ignoré). Sinon le dossier est composé isolément.
+    /// </summary>
+    public bool PassThrough { get; set; }
     public LayerFolder? Parent { get; set; }
 
     public LayerFolder(string name) => Name = name;
@@ -112,7 +122,7 @@ public sealed class LayerFolder
         }
     }
 
-    public FolderProps GetProps() => new(Name, Visible, Opacity, BlendMode, Expanded, Parent);
+    public FolderProps GetProps() => new(Name, Visible, Opacity, BlendMode, Expanded, Parent) { PassThrough = PassThrough };
 
     public void SetProps(FolderProps p)
     {
@@ -121,6 +131,7 @@ public sealed class LayerFolder
         Opacity = p.Opacity;
         BlendMode = p.BlendMode;
         Expanded = p.Expanded;
+        PassThrough = p.PassThrough;
         Parent = p.Parent;
     }
 }

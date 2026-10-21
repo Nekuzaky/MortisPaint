@@ -77,11 +77,11 @@ public static class CanvasOps
         return Remap(src, width, height, SKMatrix.CreateScale(width / (float)src.Width, height / (float)src.Height), smooth: true);
     }
 
-    /// <summary>Recadre la toile sur un rectangle.</summary>
-    public static Document Crop(Document src, SKRectI rect)
+    /// <summary>Recadre la toile sur un rectangle (borné à la toile) ; null si celui-ci n'y touche pas.</summary>
+    public static Document? Crop(Document src, SKRectI rect)
     {
-        rect = BitmapUtil.Clamp(rect, src.Width, src.Height);
-        if (rect.Width < 1 || rect.Height < 1) throw new ArgumentException("Zone de recadrage vide.");
+        rect = BitmapUtil.Clamp(rect.Standardized, src.Width, src.Height);
+        if (rect.Width < 1 || rect.Height < 1) return null;
         return Remap(src, rect.Width, rect.Height, SKMatrix.CreateTranslation(-rect.Left, -rect.Top), smooth: false);
     }
 }
