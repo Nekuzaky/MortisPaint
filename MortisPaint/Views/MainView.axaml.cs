@@ -124,6 +124,8 @@ public partial class MainView : UserControl
     {
         if (_editor == null) return;
         var ed = _editor;
+        // Un export lit encore les calques en arrière-plan : on ne libère pas le document sous ses pieds.
+        if (ed.IsBusy) return;
         var error = ed.AutoSave();
         // Échec d'enregistrement : on ne ferme pas sans prévenir, sinon le travail est perdu.
         if (error != null && !await ConfirmUnsavedAsync(error, "Fermer sans enregistrer")) return;

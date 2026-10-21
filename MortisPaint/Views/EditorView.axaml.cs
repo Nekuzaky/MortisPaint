@@ -35,6 +35,10 @@ public partial class EditorView : UserControl
     Tab _tab = Tab.Brush;
     bool _sheetOpen;
     bool _closed;
+    bool _busy;
+
+    /// <summary>Export en cours en arrière-plan : l'éditeur ne doit pas être fermé tant qu'il lit les calques.</summary>
+    public bool IsBusy => _busy;
 
     // Timelapse
     TimelapseRecorder? _timelapse;
@@ -320,7 +324,7 @@ public partial class EditorView : UserControl
     void StartTimelapse()
     {
         if (!_state.Timelapse) { _timelapse = null; RecBadge.IsVisible = false; return; }
-        _timelapse = new TimelapseRecorder(Path.Combine(AppPaths.Root, "Timelapse", _engine.Document.Id.ToString("N")));
+        _timelapse = new TimelapseRecorder(AppPaths.TimelapseDir(_engine.Document.Id));
         RecBadge.IsVisible = true;
         if (_timelapse.FrameCount == 0) ScheduleTimelapse();
     }
@@ -815,7 +819,7 @@ public partial class EditorView : UserControl
 
     void OnKeyDown(object? sender, KeyEventArgs e)
     {
-        if (_closed || MainView.Current == null || MainView.Current.IsDialogOpen) return;
+        if (_closed || _busy || MainView.Current == null || MainView.Current.IsDialogOpen) return;
         if (_top?.FocusManager?.GetFocusedElement() is TextBox) return;
         if (_text != null)
         {
@@ -955,11 +959,7 @@ public partial class EditorView : UserControl
         if (file == null || _closed) return;
         try
         {
-            using var ms = new MemoryStream();
-            ProjectIO.ExportImage(_engine.Document, ms, format, 92);
-            ms.Position = 0;
-            await using var s = await file.OpenWriteAsync();
-            await ms.CopyToAsync(s);
+            await RunExportAsync(file, "Export de l'image…", (doc, s) => ProjectIO.ExportImage(doc, s, format, 92));
             ShowToast("Image exportée : " + file.Name);
         }
         catch (Exception ex)
@@ -983,16 +983,41 @@ public partial class EditorView : UserControl
         if (file == null || _closed) return;
         try
         {
-            using var ms = new MemoryStream();
-            PsdFile.Write(_engine.Document, ms);
-            ms.Position = 0;
-            await using var s = await file.OpenWriteAsync();
-            await ms.CopyToAsync(s);
+            await RunExportAsync(file, "Export du PSD…", PsdFile.Write);
             ShowToast("PSD exporté : " + file.Name + " — calques et dossiers conservés");
         }
         catch (Exception ex)
         {
             ShowToast("Export impossible : " + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Écrit le fichier en arrière-plan, directement dans sa destination (pas de copie complète en mémoire).
+    /// L'écriture lit les calques en direct : l'édition est bloquée jusqu'à la fin.
+    /// </summary>
+    async Task RunExportAsync(IStorageFile file, string busyText, Action<Document, Stream> write)
+    {
+        var doc = _engine.Document;
+        _busy = true;
+        IsHitTestVisible = false;
+        Canvas.InputLocked = true;
+        ShowToast(busyText);
+        try
+        {
+            await using var s = await file.OpenWriteAsync();
+            await Task.Run(() =>
+            {
+                using var buffered = new BufferedStream(s, 1 << 16);
+                write(doc, buffered);
+                buffered.Flush();
+            });
+        }
+        finally
+        {
+            _busy = false;
+            IsHitTestVisible = true;
+            if (!_playing) Canvas.InputLocked = false;
         }
     }
 
@@ -1011,7 +1036,8 @@ public partial class EditorView : UserControl
         using var ms = new MemoryStream();
         await using (var s = await f.OpenReadAsync()) await s.CopyToAsync(ms);
         ms.Position = 0;
-        var bmp = BitmapUtil.Decode(ms);
+        // Photos d'appareil : on applique l'orientation EXIF pour qu'elles arrivent debout.
+        var bmp = BitmapUtil.DecodeOriented(ms);
         if (bmp == null) ShowToast("Format d'image non reconnu");
         return bmp;
     }

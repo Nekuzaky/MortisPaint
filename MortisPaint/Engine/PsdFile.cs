@@ -40,6 +40,9 @@ public static class PsdFile
         return "norm";
     }
 
+    /// <summary>Dossier « pass-through » : la clé du bloc lsct fait foi, à défaut celle de l'enregistrement.</summary>
+    static bool IsPass(LayerRec l) => (l.SectionBlend ?? l.Blend) == "pass";
+
     static LayerBlendMode ModeOf(string key)
     {
         foreach (var (mode, k) in BlendKeys)
@@ -72,12 +75,12 @@ public static class PsdFile
         int w = doc.Width, h = doc.Height;
         // Enregistrements de bas en haut. Un dossier s'écrit : séparateur de fin (type 3), contenu, puis
         // l'enregistrement du dossier lui-même (type 1 ouvert / 2 fermé) — c'est ainsi qu'ibisPaint et Photoshop les lisent.
-        var layers = new List<(string Name, SKBitmap? Bitmap, bool Visible, float Opacity, LayerBlendMode Blend, bool Clip, bool Lock, bool Owned, int Section)>();
+        var layers = new List<(string Name, SKBitmap? Bitmap, bool Visible, float Opacity, LayerBlendMode Blend, bool Clip, bool Lock, bool Owned, int Section, bool Pass)>();
         if (doc.PaperVisible)
         {
             var paper = new SKBitmap(BitmapUtil.Info(w, h));
             paper.Erase(doc.PaperColor);
-            layers.Add((PaperName, paper, true, 1f, LayerBlendMode.Normal, false, false, true, 0));
+            layers.Add((PaperName, paper, true, 1f, LayerBlendMode.Normal, false, false, true, 0, false));
         }
         var open = new List<LayerFolder>();
         void CloseTo(int depth)
@@ -86,7 +89,7 @@ public static class PsdFile
             {
                 var f = open[^1];
                 open.RemoveAt(open.Count - 1);
-                layers.Add((f.Name, null, f.Visible, f.Opacity, f.BlendMode, false, false, false, f.Expanded ? 1 : 2));
+                layers.Add((f.Name, null, f.Visible, f.Opacity, f.BlendMode, false, false, false, f.Expanded ? 1 : 2, f.PassThrough));
             }
         }
         foreach (var l in doc.Layers)
@@ -98,10 +101,10 @@ public static class PsdFile
             CloseTo(common);
             for (int k = common; k < chain.Count; k++)
             {
-                layers.Add(("</Layer group>", null, true, 1f, LayerBlendMode.Normal, false, false, false, 3));
+                layers.Add(("</Layer group>", null, true, 1f, LayerBlendMode.Normal, false, false, false, 3, false));
                 open.Add(chain[k]);
             }
-            layers.Add((l.Name, l.Bitmap, l.Visible, l.Opacity, l.BlendMode, l.Clipping, l.AlphaLock, false, 0));
+            layers.Add((l.Name, l.Bitmap, l.Visible, l.Opacity, l.BlendMode, l.Clipping, l.AlphaLock, false, 0, false));
         }
         CloseTo(0);
 
@@ -160,7 +163,8 @@ public static class PsdFile
                     li.U32((uint)lengths[c]);
                 }
                 li.Ascii("8BIM");
-                li.Ascii(KeyOf(l.Blend));
+                // Dossier « pass-through » : clé « pass », comme Photoshop.
+                li.Ascii(l.Pass ? "pass" : KeyOf(l.Blend));
                 li.U8((byte)Math.Clamp(MathF.Round(l.Opacity * 255f), 0, 255));
                 li.U8((byte)(l.Clip ? 1 : 0));
                 li.U8((byte)((l.Lock ? 0x01 : 0) | (l.Visible ? 0 : 0x02)));
@@ -193,7 +197,7 @@ public static class PsdFile
                     ex.U32(12);
                     ex.U32((uint)l.Section);
                     ex.Ascii("8BIM");
-                    ex.Ascii(l.Section == 3 ? "pass" : KeyOf(l.Blend));
+                    ex.Ascii(l.Section == 3 || l.Pass ? "pass" : KeyOf(l.Blend));
                 }
                 li.U32((uint)extra.Length);
                 li.Bytes(extra.GetBuffer(), 0, (int)extra.Length);
@@ -362,6 +366,8 @@ public static class PsdFile
         public byte Opacity = 255, Clipping, Flags;
         public string Name = "";
         public int SectionType;
+        /// <summary>Clé de fusion du bloc lsct (prioritaire sur celle de l'enregistrement pour un dossier).</summary>
+        public string? SectionBlend;
         public int MaskTop, MaskLeft, MaskBottom, MaskRight;
         public byte MaskDefault = 255, MaskFlags;
         public bool HasMask;
@@ -526,7 +532,8 @@ public static class PsdFile
                 {
                     Visible = (l.Flags & 0x02) == 0,
                     Opacity = l.Opacity / 255f,
-                    BlendMode = l.Blend == "pass" ? LayerBlendMode.Normal : ModeOf(l.Blend),
+                    BlendMode = IsPass(l) ? LayerBlendMode.Normal : ModeOf(l.SectionBlend ?? l.Blend),
+                    PassThrough = IsPass(l),
                     Expanded = l.SectionType == 1,
                 };
                 foreach (var item in contexts.Pop())
@@ -741,6 +748,7 @@ public static class PsdFile
             else if ((key == "lsct" || key == "lsdk") && len >= 4)
             {
                 l.SectionType = (int)r.U32();
+                if (len >= 12 && r.Ascii(4) == "8BIM") l.SectionBlend = r.Ascii(4);
             }
             r.Pos = end;
         }

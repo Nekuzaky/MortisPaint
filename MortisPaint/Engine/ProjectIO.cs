@@ -33,6 +33,7 @@ public sealed class FolderEntry
     public float Opacity { get; set; } = 1f;
     public string Blend { get; set; } = nameof(LayerBlendMode.Normal);
     public bool Expanded { get; set; } = true;
+    public bool PassThrough { get; set; }
     public string? ParentId { get; set; }
 }
 
@@ -103,6 +104,7 @@ public static class ProjectIO
                 Opacity = f.Opacity,
                 Blend = f.BlendMode.ToString(),
                 Expanded = f.Expanded,
+                PassThrough = f.PassThrough,
                 ParentId = f.Parent?.Id.ToString("N"),
             });
         }
@@ -226,6 +228,7 @@ public static class ProjectIO
                 Opacity = Math.Clamp(fe.Opacity, 0f, 1f),
                 BlendMode = Enum.TryParse<LayerBlendMode>(fe.Blend, out var fb) ? fb : LayerBlendMode.Normal,
                 Expanded = fe.Expanded,
+                PassThrough = fe.PassThrough,
             };
         }
         foreach (var fe in manifest.Folders)
