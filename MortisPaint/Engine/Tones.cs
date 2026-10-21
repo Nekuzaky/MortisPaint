@@ -74,6 +74,40 @@ public static class Tones
         return bmp;
     }
 
+    // Rayon d'un point (en cellules) qui encre la part i/255 de sa cellule. Au-delà de π/4 le disque déborde sur
+    // les cellules voisines : on inverse alors l'aire du disque coupé par la cellule (un carré unité).
+    static readonly float[] DotRadius = BuildDotRadius();
+
+    static float[] BuildDotRadius()
+    {
+        var lut = new float[256];
+        for (int i = 0; i < 256; i++)
+        {
+            float cover = i / 255f;
+            if (cover <= MathF.PI / 4f)
+            {
+                lut[i] = MathF.Sqrt(cover / MathF.PI);
+                continue;
+            }
+            float lo = 0.5f, hi = MathF.Sqrt(0.5f);
+            for (int k = 0; k < 24; k++)
+            {
+                float mid = (lo + hi) / 2f;
+                if (CellCoverage(mid) < cover) lo = mid; else hi = mid;
+            }
+            lut[i] = hi;
+        }
+        return lut;
+    }
+
+    /// <summary>Aire d'un disque de rayon r (½ ≤ r ≤ √½) centré dans une cellule unité, limitée à la cellule.</summary>
+    static float CellCoverage(float r)
+    {
+        float chord = MathF.Sqrt(r * r - 0.25f);
+        float segment = r * r * MathF.Acos(0.5f / r) - 0.5f * chord;
+        return MathF.PI * r * r - 4f * segment;
+    }
+
     /// <summary>Filtre demi-teinte : transforme les valeurs du calque en points de trame.</summary>
     public static void Halftone(SKBitmap src, SKBitmap dst, float cell, float angleDegrees, bool keepColor)
     {
@@ -92,7 +126,7 @@ public static class Tones
         float cos = (float)Math.Cos(a), sin = (float)Math.Sin(a);
         float cx = w / 2f, cy = h / 2f;
         float half = MathF.Sqrt(w * w + h * h) / 2f + cell;
-        for (float u = -half; u <= half; u += cell)
+        for (float u = -half; u <= half && !Filters.Cancelled; u += cell)
         {
             for (float v = -half; v <= half; v += cell)
             {
@@ -103,7 +137,8 @@ public static class Tones
                 float lum = (0.299f * col.Red + 0.587f * col.Green + 0.114f * col.Blue) / 255f;
                 float dark = 1f - lum;
                 if (dark < 0.02f) continue;
-                float r = cell * 0.5f * MathF.Sqrt(2f * dark);
+                // Part de la cellule encrée = obscurité (gris à 50 % → 50 % de points).
+                float r = cell * DotRadius[Math.Clamp((int)(dark * 255f + 0.5f), 0, 255)];
                 dot.Color = keepColor ? col.WithAlpha(255) : SKColors.Black;
                 dot.Color = dot.Color.WithAlpha(col.Alpha);
                 dc.DrawCircle(x, y, r, dot);
