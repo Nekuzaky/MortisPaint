@@ -7,6 +7,8 @@ using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Rendering;
+using Avalonia.Rendering.SceneGraph;
+using Avalonia.Skia;
 using Avalonia.Threading;
 using MortisPaint.Editor;
 using MortisPaint.Engine;
@@ -20,7 +22,12 @@ namespace MortisPaint.Controls;
 /// </summary>
 public sealed class CanvasView : Control, ICustomHitTest
 {
-    enum Gesture { None, Tool, Pan, Pinch, Pick, Blocked, Handle }
+    /// <summary>
+    /// Interaction en cours. Pending : outil instantané (pot, baguette, texte, pipette) posé au doigt,
+    /// qui attend le relâchement ou <see cref="TapDelay"/> pour qu'un 2ᵉ doigt puisse encore l'annuler.
+    /// Blocked : des pointeurs restent posés mais n'agissent plus jusqu'à leur relâchement.
+    /// </summary>
+    enum Gesture { None, Tool, Pan, Pinch, Pick, Blocked, Handle, Pending }
     enum HandleKind { SymmetryCenter, RulerCenter, RulerAngle, Text }
     enum TDrag { None, Move, Scale, ScaleX, ScaleY, Rotate }
 
@@ -36,6 +43,10 @@ public sealed class CanvasView : Control, ICustomHitTest
     static readonly IPen CursorOuter = new Pen(new SolidColorBrush(Color.FromArgb(230, 255, 255, 255)), 1.5);
     static readonly IPen CursorInner = new Pen(new SolidColorBrush(Color.FromArgb(220, 0x0C, 0x0C, 0x0C)), 0.75);
     const double DotStep = 22;
+    /// <summary>Délai (ms) avant qu'un outil instantané posé au doigt agisse, s'il n'est pas relâché avant.</summary>
+    const int TapDelay = 180;
+    /// <summary>Rayon de saisie des poignées : au doigt, et à la souris / au stylet (précis, on ne vole pas les traits).</summary>
+    const double HandleHitTouch = 22, HandleHitPrecise = 12;
     static ImageBrush? _dotGrid;
 
     /// <summary>Trame pointillée du plan de travail, tuilée en un seul appel de dessin.</summary>
@@ -93,6 +104,15 @@ public sealed class CanvasView : Control, ICustomHitTest
     DispatcherTimer? _longPress;
     bool _penPressureSeen;
     bool _shift;
+    // Souris ou stylet qui mène l'interaction (-1 : aucun) ; il a la priorité sur les doigts.
+    int _stylusId = -1;
+    MouseButton _stylusButton;
+    // Contacts écartés jusqu'à leur relâchement (paume posée pendant un trait au stylet).
+    readonly HashSet<int> _ignoredTouches = new();
+    // Outil instantané en attente au doigt (Gesture.Pending)
+    DispatcherTimer? _pendingTimer;
+    ToolKind _pendingTool;
+    Point _pendingPos;
 
     // Sessions d'outils
     BrushStrokeSession? _stroke;
@@ -102,15 +122,24 @@ public sealed class CanvasView : Control, ICustomHitTest
     List<SKPoint>? _lasso;
     SKPoint _dragStart, _dragEnd;
     Geometry? _selectionGeometry;
+    // Contour de plus de HugeOutline points (baguette sur une zone bruitée) : tracé par OutlineDraw.
+    SKPath? _hugeOutline;
+    const int HugeOutline = 20000;
+    // Sélection : l'opération est choisie au début du tracé (Maj = ajouter, Alt = retirer) ;
+    // Maj pressée ensuite pendant le tracé contraint le rectangle en carré, l'ellipse en cercle.
+    SelectionOp _selectOp;
+    bool _shiftFromStart;
 
     // Survol / pipette
     Point? _hover;
     Point _pickPos;
     SKColor? _pickRing;
+    SKColor _pickRestore;
 
     // Poignées (centre de symétrie, règle) et contrainte de la règle
     HandleKind _handle;
-    SKPoint _handleOffset;
+    SKPoint _handleOffset, _handleStart;
+    float _handleStartAngle;
     Func<SKPoint, SKPoint>? _constraint;
 
     // Transformation
@@ -135,7 +164,43 @@ public sealed class CanvasView : Control, ICustomHitTest
     public event Action? BrushSizeChangedByWheel;
 
     public bool SpacePan { get; set; }
-    public bool InputLocked { get; set; }
+
+    /// <summary>
+    /// Outils bloqués (filtre en cours, lecture de l'animation) : seule la navigation reste possible
+    /// (molette, pincement, déplacement au doigt, clic milieu, Espace, main). Verrouiller termine l'interaction en cours.
+    /// </summary>
+    public bool InputLocked
+    {
+        get => _inputLocked;
+        set
+        {
+            if (value && !_inputLocked && IsInteracting) FinishInteraction();
+            _inputLocked = value;
+        }
+    }
+    bool _inputLocked;
+
+    /// <summary>Vrai pendant un trait, un geste (déplacement, pincement, pipette, poignée) ou un glisser d'outil.</summary>
+    public bool IsInteracting => _gesture is not (Gesture.None or Gesture.Blocked);
+
+    /// <summary>
+    /// Termine proprement l'interaction en cours : le trait ou le glisser est validé, le geste terminé,
+    /// un outil instantané encore en attente au doigt est abandonné. Les pointeurs encore posés
+    /// n'agissent plus jusqu'à leur relâchement.
+    /// </summary>
+    public void FinishInteraction()
+    {
+        StopLongPress();
+        switch (_gesture)
+        {
+            case Gesture.Tool: EndToolGesture(commit: true); break;
+            case Gesture.Pick: EndPick(); break;
+            case Gesture.Pending: CancelPending(); break;
+        }
+        _gesture = _touches.Count > 0 || _stylusId >= 0 ? Gesture.Blocked : Gesture.None;
+        _toolPointerId = -1;
+        InvalidateVisual();
+    }
 
     /// <summary>Texte en cours de saisie (outil Texte) : il se déplace en glissant sur la toile.</summary>
     public TextSession? Text { get; set; }
@@ -176,7 +241,13 @@ public sealed class CanvasView : Control, ICustomHitTest
     public void Detach()
     {
         if (_engine == null) return;
-        EndToolGesture(commit: true);
+        FinishInteraction();
+        // Les pointeurs encore posés appartiennent à l'ancien document : leurs relâchements seront ignorés.
+        _touches.Clear();
+        _touchStarts.Clear();
+        _ignoredTouches.Clear();
+        _stylusId = -1;
+        _gesture = Gesture.None;
         if (Transform != null) CommitTransform();
         _engine.DisplayInvalidated -= RequestFrame;
         _engine.Selection.Changed -= OnSelectionChanged;
@@ -189,10 +260,31 @@ public sealed class CanvasView : Control, ICustomHitTest
     public void OnToolChanged()
     {
         if (_state == null) return;
+        // Changer d'outil en plein trait valide le trait ; le pointeur resté posé n'agit plus.
+        if (IsInteracting) FinishInteraction();
         if (_state.Tool != ToolKind.Transform && Transform != null) CommitTransform();
         UpdateCursor();
         InvalidateVisual();
     }
+
+    TopLevel? _topLevel;
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _topLevel = TopLevel.GetTopLevel(this);
+        if (_topLevel is WindowBase w) w.Deactivated += OnWindowDeactivated;
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        if (_topLevel is WindowBase w) w.Deactivated -= OnWindowDeactivated;
+        _topLevel = null;
+        base.OnDetachedFromVisualTree(e);
+    }
+
+    /// <summary>Fenêtre quittée avec Espace enfoncé : son relâchement ne nous parviendra pas, on quitte le mode main.</summary>
+    void OnWindowDeactivated(object? sender, EventArgs e) => SpacePan = false;
 
     void UpdateCursor()
     {
@@ -208,12 +300,19 @@ public sealed class CanvasView : Control, ICustomHitTest
     void OnSelectionChanged()
     {
         _selectionGeometry = null;
+        _hugeOutline = null;
         var path = _engine?.Selection.Path;
-        if (path != null)
+        if (path != null && path.PointCount > HugeOutline)
+        {
+            // Copie figée : elle est tracée sur le fil de rendu pendant que la sélection peut changer.
+            // Jamais libérée ici (une image en cours peut encore l'utiliser) : le ramasse-miettes s'en charge.
+            _hugeOutline = new SKPath(path);
+        }
+        else if (path != null)
         {
             try
             {
-                _selectionGeometry = StreamGeometry.Parse(path.ToSvgPathData());
+                _selectionGeometry = ToGeometry(path);
             }
             catch
             {
@@ -222,6 +321,70 @@ public sealed class CanvasView : Control, ICustomHitTest
             }
         }
         InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Contour Skia → géométrie Avalonia, verbe par verbe : bien plus rapide que de passer par le texte SVG
+    /// (contours de la baguette en escalier).
+    /// </summary>
+    static Geometry ToGeometry(SKPath path)
+    {
+        var g = new StreamGeometry();
+        using (var ctx = g.Open())
+        {
+            ctx.SetFillRule(FillRule.NonZero);
+            using var it = path.CreateRawIterator();
+            var pts = new SKPoint[4];
+            bool open = false;
+            SKPoint start = default;
+            static Point P(SKPoint p) => new(p.X, p.Y);
+            void Ensure(SKPoint from)
+            {
+                if (open) return;
+                ctx.BeginFigure(P(from), false);
+                open = true;
+            }
+            SKPathVerb verb;
+            while ((verb = it.Next(pts)) != SKPathVerb.Done)
+            {
+                switch (verb)
+                {
+                    case SKPathVerb.Move:
+                        if (open) ctx.EndFigure(false);
+                        open = false;
+                        start = pts[0];
+                        Ensure(start);
+                        break;
+                    case SKPathVerb.Line:
+                        Ensure(start);
+                        ctx.LineTo(P(pts[1]));
+                        break;
+                    case SKPathVerb.Quad:
+                        Ensure(start);
+                        ctx.QuadraticBezierTo(P(pts[1]), P(pts[2]));
+                        break;
+                    case SKPathVerb.Conic:
+                    {
+                        // Ellipses Skia : arcs coniques, convertis en quadratiques.
+                        Ensure(start);
+                        var quads = SKPath.ConvertConicToQuads(pts[0], pts[1], pts[2], it.ConicWeight(), 2);
+                        for (int i = 1; i + 1 < quads.Length; i += 2)
+                            ctx.QuadraticBezierTo(P(quads[i]), P(quads[i + 1]));
+                        break;
+                    }
+                    case SKPathVerb.Cubic:
+                        Ensure(start);
+                        ctx.CubicBezierTo(P(pts[1]), P(pts[2]), P(pts[3]));
+                        break;
+                    case SKPathVerb.Close:
+                        if (open) ctx.EndFigure(true);
+                        open = false;
+                        break;
+                }
+            }
+            if (open) ctx.EndFigure(false);
+        }
+        return g;
     }
 
     // ================================================================ affichage
@@ -448,6 +611,10 @@ public sealed class CanvasView : Control, ICustomHitTest
                 ctx.DrawGeometry(null, antsBlack, _selectionGeometry);
             }
         }
+        else if (_hugeOutline != null && Transform == null)
+        {
+            ctx.Custom(new OutlineDraw(_hugeOutline, m, new Rect(Bounds.Size), (float)(4.5 / _zoom)));
+        }
 
         if (_lasso != null && _gesture == Gesture.Tool && _activeTool == ToolKind.Select)
         {
@@ -512,64 +679,94 @@ public sealed class CanvasView : Control, ICustomHitTest
 
     // ================================================================ pointeurs
 
+    // Arbitrage des pointeurs : une seule interaction à la fois, jamais écrasée sans avoir été terminée ou annulée.
+    // - Le stylet (ou la souris) a la priorité : pendant son interaction, les contacts tactiles sont ignorés
+    //   jusqu'à leur relâchement (rejet de paume) ; s'il se pose pendant un geste des doigts, ce geste est annulé.
+    // - Un 2ᵉ doigt pendant un trait au doigt annule le trait et passe au pincement, comme ibisPaint.
+
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
-        if (_engine == null || _state == null || InputLocked) return;
+        if (_engine == null || _state == null) return;
         var pt = e.GetCurrentPoint(this);
         var pos = pt.Position;
+        int id = e.Pointer.Id;
         e.Handled = true;
-        _shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
-        _alt = e.KeyModifiers.HasFlag(KeyModifiers.Alt);
-        CanvasPressed?.Invoke();
 
         if (e.Pointer.Type == PointerType.Touch)
         {
-            _touches[e.Pointer.Id] = pos;
-            _touchStarts[e.Pointer.Id] = pos;
             e.Pointer.Capture(this);
+            if (_stylusId >= 0)
+            {
+                _ignoredTouches.Add(id);
+                return;
+            }
+            _ignoredTouches.Remove(id);
+            _shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+            _alt = e.KeyModifiers.HasFlag(KeyModifiers.Alt);
+            if (!InputLocked) CanvasPressed?.Invoke();
+            if (_touches.Count == 0 && _gesture != Gesture.None) FinishInteraction();
+            _touches[id] = pos;
+            _touchStarts[id] = pos;
             if (_touches.Count == 1)
             {
                 _touchDownTime = DateTime.UtcNow;
                 _maxTouches = 1;
                 _touchMoved = false;
-                bool draws = _state.TouchDraws && _state.Tool != ToolKind.Hand;
+                bool draws = _state.TouchDraws && _state.Tool != ToolKind.Hand && !InputLocked;
                 if (draws)
                 {
-                    BeginTool(e.Pointer.Id, pos, 1f, false);
+                    BeginTool(id, pos, 1f, false, touch: true);
                     StartLongPress();
                 }
                 else
                 {
-                    BeginPan(pos);
+                    BeginPan(id, pos);
                 }
             }
             else
             {
                 _maxTouches = Math.Max(_maxTouches, _touches.Count);
-                StopLongPress();
-                if (_gesture is Gesture.Tool or Gesture.Pick) EndToolGesture(commit: false);
+                CancelTouchTool();
                 if (_touches.Count == 2 || _gesture != Gesture.Pinch) BeginPinch();
             }
             return;
         }
 
+        if (_stylusId >= 0)
+        {
+            // Autre bouton du même pointeur pendant un glisser : l'interaction en cours continue.
+            if (id == _stylusId) return;
+            FinishInteraction();
+            _stylusId = -1;
+        }
+        // Le stylet prime sur les doigts : le geste tactile en cours (souvent la paume) est annulé.
+        if (_touches.Count > 0) YieldTouches();
+        else if (_gesture != Gesture.None) FinishInteraction();
         e.Pointer.Capture(this);
+        _stylusId = id;
+        _stylusButton = pt.Properties.PointerUpdateKind.GetMouseButton();
+        _shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        _alt = e.KeyModifiers.HasFlag(KeyModifiers.Alt);
         _hover = pos;
+        if (!InputLocked) CanvasPressed?.Invoke();
         if (pt.Properties.IsMiddleButtonPressed || SpacePan || _state.Tool == ToolKind.Hand)
         {
-            BeginPan(pos);
+            BeginPan(id, pos);
             return;
         }
-        if (pt.Properties.IsLeftButtonPressed && TryBeginHandle(e.Pointer.Id, pos)) return;
+        if (InputLocked)
+        {
+            _gesture = Gesture.Blocked;
+            return;
+        }
+        if (pt.Properties.IsLeftButtonPressed && TryBeginHandle(id, pos, touch: false)) return;
         if (pt.Properties.IsRightButtonPressed || pt.Properties.IsBarrelButtonPressed)
         {
-            _gesture = Gesture.Pick;
-            _toolPointerId = e.Pointer.Id;
-            Pick(pos);
+            BeginPick(id, pos);
             return;
         }
-        BeginTool(e.Pointer.Id, pos, PressureOf(e.Pointer.Type, pt.Properties), pt.Properties.IsEraser);
+        BeginTool(id, pos, PressureOf(e.Pointer.Type, pt.Properties), pt.Properties.IsEraser, touch: false);
     }
 
     protected override void OnPointerMoved(PointerEventArgs e)
@@ -577,26 +774,37 @@ public sealed class CanvasView : Control, ICustomHitTest
         base.OnPointerMoved(e);
         if (_engine == null || _state == null) return;
         var pos = e.GetPosition(this);
-        _shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        int id = e.Pointer.Id;
 
         if (e.Pointer.Type == PointerType.Touch)
         {
-            if (!_touches.ContainsKey(e.Pointer.Id)) return;
-            _touches[e.Pointer.Id] = pos;
-            if (_touchStarts.TryGetValue(e.Pointer.Id, out var start) && Dist(start, pos) > 12)
+            if (!_touches.ContainsKey(id)) return;
+            _shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+            _touches[id] = pos;
+            if (_touchStarts.TryGetValue(id, out var start) && Dist(start, pos) > 12)
             {
                 _touchMoved = true;
                 StopLongPress();
+                // La pipette au doigt suit le doigt dès qu'il glisse.
+                if (_gesture == Gesture.Pending && id == _toolPointerId && _pendingTool == ToolKind.Eyedropper) FirePending(pos);
             }
         }
         else
         {
             _hover = pos;
+            // Survol d'un pointeur qui ne mène pas l'interaction (souris pendant un geste des doigts, etc.).
+            if (id != _stylusId)
+            {
+                if (EditorState.IsBrushTool(_state.Tool)) InvalidateVisual();
+                return;
+            }
+            _shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
         }
 
         switch (_gesture)
         {
             case Gesture.Pan:
+                if (id != _toolPointerId) break;
                 _center = _centerStart + (pos - _panStart);
                 ViewChanged?.Invoke();
                 InvalidateVisual();
@@ -605,13 +813,13 @@ public sealed class CanvasView : Control, ICustomHitTest
                 UpdatePinch();
                 break;
             case Gesture.Tool:
-                if (e.Pointer.Id == _toolPointerId) MoveTool(e, pos);
+                if (id == _toolPointerId) MoveTool(e, pos);
                 break;
             case Gesture.Pick:
-                if (e.Pointer.Id == _toolPointerId) Pick(pos);
+                if (id == _toolPointerId) Pick(pos);
                 break;
             case Gesture.Handle:
-                if (e.Pointer.Id == _toolPointerId) MoveHandle(pos);
+                if (id == _toolPointerId) MoveHandle(pos);
                 break;
             default:
                 if (e.Pointer.Type != PointerType.Touch && EditorState.IsBrushTool(_state.Tool)) InvalidateVisual();
@@ -623,20 +831,37 @@ public sealed class CanvasView : Control, ICustomHitTest
     {
         base.OnPointerReleased(e);
         if (_engine == null || _state == null) return;
+        int id = e.Pointer.Id;
 
         if (e.Pointer.Type == PointerType.Touch)
         {
-            _touches.Remove(e.Pointer.Id);
-            _touchStarts.Remove(e.Pointer.Id);
-            if (_gesture == Gesture.Tool && e.Pointer.Id == _toolPointerId) EndToolGesture(commit: true);
-            else if (_gesture == Gesture.Handle && e.Pointer.Id == _toolPointerId) _gesture = Gesture.None;
-            else if (_gesture == Gesture.Pick && e.Pointer.Id == _toolPointerId) EndPick();
-            else if (_gesture == Gesture.Pinch && _touches.Count < 2) _gesture = Gesture.Blocked;
+            // Paume écartée, ou contact inconnu : son relâchement ne touche pas à l'interaction en cours.
+            if (_ignoredTouches.Remove(id) || !_touches.ContainsKey(id))
+            {
+                e.Pointer.Capture(null);
+                return;
+            }
+            var pos = e.GetPosition(this);
+            _touches.Remove(id);
+            _touchStarts.Remove(id);
+            // Tap avec un outil instantané : il agit au relâchement.
+            if (_gesture == Gesture.Pending && id == _toolPointerId) FirePending(pos);
+
+            if (_gesture == Gesture.Tool && id == _toolPointerId) EndToolGesture(commit: true);
+            else if (_gesture == Gesture.Handle && id == _toolPointerId) _gesture = Gesture.None;
+            else if (_gesture == Gesture.Pick && id == _toolPointerId) EndPick();
+            else if (_gesture == Gesture.Pan && id == _toolPointerId) _gesture = Gesture.Blocked;
+            else if (_gesture == Gesture.Pinch)
+            {
+                // Un doigt du pincement se lève alors que d'autres restent (3 doigts) : on repart des doigts restants.
+                if (_touches.Count < 2) _gesture = Gesture.Blocked;
+                else if (id == _pinchIdA || id == _pinchIdB) BeginPinch();
+            }
 
             if (_touches.Count == 0)
             {
                 bool quick = (DateTime.UtcNow - _touchDownTime).TotalMilliseconds < 400;
-                if (_maxTouches >= 2 && !_touchMoved && quick && _state.TwoFingerUndo)
+                if (_maxTouches >= 2 && !_touchMoved && quick && _state.TwoFingerUndo && !InputLocked)
                 {
                     if (_maxTouches == 2) UndoGesture?.Invoke();
                     else RedoGesture?.Invoke();
@@ -648,28 +873,79 @@ public sealed class CanvasView : Control, ICustomHitTest
             return;
         }
 
+        if (id != _stylusId) return;
+        // Relâchement d'un autre bouton alors que celui du glisser reste enfoncé : l'interaction continue.
+        var props = e.GetCurrentPoint(this).Properties;
+        bool anyDown = props.IsLeftButtonPressed || props.IsRightButtonPressed || props.IsMiddleButtonPressed
+            || props.IsBarrelButtonPressed || props.IsXButton1Pressed || props.IsXButton2Pressed;
+        if (anyDown && e.InitialPressMouseButton != _stylusButton) return;
+
         switch (_gesture)
         {
             case Gesture.Tool: EndToolGesture(commit: true); break;
             case Gesture.Pick: EndPick(); break;
             default: _gesture = Gesture.None; break;
         }
+        _toolPointerId = -1;
+        _stylusId = -1;
         e.Pointer.Capture(null);
     }
 
     protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
     {
         base.OnPointerCaptureLost(e);
+        int id = e.Pointer.Id;
         if (e.Pointer.Type == PointerType.Touch)
         {
-            if (!_touches.Remove(e.Pointer.Id)) return;
-            _touchStarts.Remove(e.Pointer.Id);
-            if (_gesture == Gesture.Tool && e.Pointer.Id == _toolPointerId) EndToolGesture(commit: true);
-            if (_touches.Count == 0) _gesture = Gesture.None;
+            if (_ignoredTouches.Remove(id)) return;
+            if (!_touches.Remove(id)) return;
+            _touchStarts.Remove(id);
+            // Contact interrompu : l'outil instantané en attente n'agit pas, le trait est validé.
+            if (_gesture == Gesture.Pending && id == _toolPointerId) CancelPending();
+            else if (_gesture == Gesture.Tool && id == _toolPointerId) EndToolGesture(commit: true);
+            else if (_gesture == Gesture.Pick && id == _toolPointerId) EndPick();
+            else if (_gesture is Gesture.Handle or Gesture.Pan && id == _toolPointerId) _gesture = Gesture.Blocked;
+            else if (_gesture == Gesture.Pinch)
+            {
+                if (_touches.Count < 2) _gesture = Gesture.Blocked;
+                else if (id == _pinchIdA || id == _pinchIdB) BeginPinch();
+            }
+            if (_touches.Count == 0)
+            {
+                _gesture = Gesture.None;
+                _maxTouches = 0;
+            }
             return;
         }
-        if (_gesture == Gesture.Tool && e.Pointer.Id == _toolPointerId) EndToolGesture(commit: true);
-        else if (_gesture != Gesture.None) _gesture = Gesture.None;
+        if (id != _stylusId) return;
+        _stylusId = -1;
+        FinishInteraction();
+    }
+
+    /// <summary>2ᵉ doigt : l'outil posé par le 1ᵉʳ doigt est annulé proprement (rien n'est modifié).</summary>
+    void CancelTouchTool()
+    {
+        StopLongPress();
+        switch (_gesture)
+        {
+            case Gesture.Tool: EndToolGesture(commit: false); break;
+            case Gesture.Pick: CancelPick(); break;
+            case Gesture.Pending: CancelPending(); break;
+            case Gesture.Handle: RestoreHandle(); break;
+        }
+    }
+
+    /// <summary>Le stylet se pose pendant un geste des doigts : ce geste est annulé et ses contacts ignorés.</summary>
+    void YieldTouches()
+    {
+        CancelTouchTool();
+        foreach (var t in _touches.Keys) _ignoredTouches.Add(t);
+        _touches.Clear();
+        _touchStarts.Clear();
+        _maxTouches = 0;
+        _gesture = Gesture.None;
+        _toolPointerId = -1;
+        InvalidateVisual();
     }
 
     protected override void OnPointerExited(PointerEventArgs e)
@@ -682,11 +958,13 @@ public sealed class CanvasView : Control, ICustomHitTest
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         base.OnPointerWheelChanged(e);
-        if (_engine == null || _state == null || InputLocked) return;
+        if (_engine == null || _state == null) return;
         var pos = e.GetPosition(this);
         double d = Math.Abs(e.Delta.Y) > Math.Abs(e.Delta.X) ? e.Delta.Y : e.Delta.X;
         if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
+            // Outils verrouillés (filtre, lecture) : la molette ne sert plus qu'à naviguer.
+            if (InputLocked) return;
             var b = _state.CurrentBrush;
             b.Size = (float)Math.Clamp(b.Size * Math.Pow(1.12, d), 1, b.MaxSize);
             _state.NotifyBrushEdited();
@@ -715,10 +993,11 @@ public sealed class CanvasView : Control, ICustomHitTest
 
     // ================================================================ navigation
 
-    void BeginPan(Point pos)
+    void BeginPan(int pointerId, Point pos)
     {
         _isFitted = false;
         _gesture = Gesture.Pan;
+        _toolPointerId = pointerId;
         _panStart = pos;
         _centerStart = _center;
     }
@@ -777,23 +1056,106 @@ public sealed class CanvasView : Control, ICustomHitTest
         int id = _toolPointerId;
         if (!_touches.TryGetValue(id, out var pos)) return;
         EndToolGesture(commit: false);
-        _gesture = Gesture.Pick;
-        _toolPointerId = id;
-        Pick(pos);
+        BeginPick(id, pos);
+    }
+
+    // ---------------------------------------------------------------- outils instantanés au doigt
+
+    static bool IsInstantTool(ToolKind tool, EditorState state) =>
+        tool is ToolKind.Fill or ToolKind.Eyedropper or ToolKind.Text
+        || (tool == ToolKind.Select && state.SelectKind == SelectKind.Wand);
+
+    void BeginPending(int pointerId, Point pos, ToolKind tool)
+    {
+        _gesture = Gesture.Pending;
+        _toolPointerId = pointerId;
+        _pendingTool = tool;
+        _pendingPos = pos;
+        if (_pendingTimer == null)
+        {
+            _pendingTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(TapDelay) };
+            _pendingTimer.Tick += (_, _) =>
+            {
+                _pendingTimer!.Stop();
+                if (_gesture == Gesture.Pending && _touches.TryGetValue(_toolPointerId, out var p)) FirePending(p);
+            };
+        }
+        _pendingTimer.Stop();
+        _pendingTimer.Start();
+    }
+
+    /// <summary>Aucun 2ᵉ doigt n'est venu : l'outil agit (au point d'appui ; la pipette, là où est le doigt).</summary>
+    void FirePending(Point current)
+    {
+        _pendingTimer?.Stop();
+        if (_gesture != Gesture.Pending) return;
+        _gesture = Gesture.None;
+        RunInstantTool(_toolPointerId, _pendingTool == ToolKind.Eyedropper ? current : _pendingPos, _pendingTool);
+    }
+
+    void CancelPending()
+    {
+        _pendingTimer?.Stop();
+        if (_gesture == Gesture.Pending) _gesture = Gesture.None;
+        _toolPointerId = -1;
+    }
+
+    /// <summary>Pot, pipette, texte et baguette : agissent en une fois, sans glisser.</summary>
+    void RunInstantTool(int pointerId, Point pos, ToolKind tool)
+    {
+        var engine = _engine!;
+        var state = _state!;
+        var cp = ToCanvas(pos);
+        _toolPointerId = pointerId;
+        _activeTool = tool;
+        switch (tool)
+        {
+            case ToolKind.Fill:
+                if (!engine.ActiveLayer.Visible)
+                {
+                    Message?.Invoke("Le calque actif est masqué");
+                    break;
+                }
+                using (var tone = state.CreateTone())
+                    engine.Fill((int)MathF.Floor(cp.X), (int)MathF.Floor(cp.Y), state.Color, state.FillTolerance,
+                        state.FillExpand, state.FillSampleAll, state.FillOpacity, tone);
+                state.PushRecent(state.Color);
+                break;
+            case ToolKind.Eyedropper:
+                BeginPick(pointerId, pos);
+                return;
+            case ToolKind.Text:
+                TextRequested?.Invoke(cp);
+                break;
+            case ToolKind.Select:
+            {
+                bool found = false;
+                engine.Selection.Record(engine.History, "Baguette magique", () =>
+                    found = engine.SelectByColor((int)MathF.Floor(cp.X), (int)MathF.Floor(cp.Y), state.FillTolerance, state.FillSampleAll, _selectOp));
+                if (!found) Message?.Invoke("Rien à sélectionner ici");
+                break;
+            }
+        }
+        _gesture = Gesture.Blocked;
     }
 
     // ================================================================ outils
 
-    /// <summary>Saisit une poignée (centre de symétrie, règle, texte) si le pointeur est dessus.</summary>
-    bool TryBeginHandle(int pointerId, Point pos)
+    /// <summary>
+    /// Saisit une poignée (centre de symétrie, règle, texte) si le pointeur est dessus. À la souris et au stylet,
+    /// il faut viser la pastille elle-même : un trait commencé à côté n'est pas détourné.
+    /// </summary>
+    bool TryBeginHandle(int pointerId, Point pos, bool touch)
     {
         if (_engine == null || _state == null) return false;
-        const double hit = 22;
+        double hit = touch ? HandleHitTouch : HandleHitPrecise;
         var cp = ToCanvas(pos);
         void Start(HandleKind kind, SKPoint anchor)
         {
             _handle = kind;
             _handleOffset = new SKPoint(anchor.X - cp.X, anchor.Y - cp.Y);
+            _handleStart = anchor;
+            _handleStartAngle = _engine.Ruler.AngleDegrees;
             _gesture = Gesture.Handle;
             _toolPointerId = pointerId;
         }
@@ -860,28 +1222,68 @@ public sealed class CanvasView : Control, ICustomHitTest
         InvalidateVisual();
     }
 
+    /// <summary>Glisser de poignée annulé (2ᵉ doigt) : la poignée revient à sa place.</summary>
+    void RestoreHandle()
+    {
+        if (_engine == null) return;
+        switch (_handle)
+        {
+            case HandleKind.SymmetryCenter:
+                _engine.Symmetry.CenterX = _handleStart.X;
+                _engine.Symmetry.CenterY = _handleStart.Y;
+                break;
+            case HandleKind.RulerCenter:
+                _engine.Ruler.CenterX = _handleStart.X;
+                _engine.Ruler.CenterY = _handleStart.Y;
+                break;
+            case HandleKind.RulerAngle:
+                _engine.Ruler.AngleDegrees = _handleStartAngle;
+                break;
+            case HandleKind.Text:
+                Text?.Update(Text.Style, _handleStart);
+                break;
+        }
+        _gesture = Gesture.None;
+        _toolPointerId = -1;
+        GuidesMoved?.Invoke();
+        InvalidateVisual();
+    }
+
     SKPoint Constrain(SKPoint p) => _constraint?.Invoke(p) ?? p;
 
-    void BeginTool(int pointerId, Point pos, float pressure, bool penEraser)
+    void BeginTool(int pointerId, Point pos, float pressure, bool penEraser, bool touch)
     {
         var engine = _engine!;
         var state = _state!;
-        if (TryBeginHandle(pointerId, pos)) return;
+        // Une session n'est jamais écrasée : celle qui serait restée ouverte est d'abord validée
+        // (sinon ses empreintes resteraient dans le tampon et reparaîtraient dans un trait suivant).
+        if (_stroke != null || _pixel != null || _gradient != null || _shapeSession != null || _lasso != null)
+            EndToolGesture(commit: true);
+        if (TryBeginHandle(pointerId, pos, touch)) return;
+        var tool = penEraser ? ToolKind.Eraser : state.Tool;
+        _toolPointerId = pointerId;
+        _activeTool = tool;
+        _selectOp = CurrentSelectOp();
+        _shiftFromStart = _shift;
+
+        // Au doigt, les outils instantanés attendent : un pincement ou un tap à 2 doigts ne doit rien modifier.
+        if (touch && IsInstantTool(tool, state))
+        {
+            BeginPending(pointerId, pos, tool);
+            return;
+        }
+
         var cp = ToCanvas(pos);
         _constraint = null;
-        var tool0 = penEraser ? ToolKind.Eraser : state.Tool;
-        if (engine.Ruler.IsActive && tool0 is ToolKind.Brush or ToolKind.Eraser or ToolKind.Smudge or ToolKind.Blur)
+        if (engine.Ruler.IsActive && tool is ToolKind.Brush or ToolKind.Eraser or ToolKind.Smudge or ToolKind.Blur)
         {
             _constraint = engine.Ruler.Begin(cp, (float)(6 / _zoom));
             cp = Constrain(cp);
         }
-        _toolPointerId = pointerId;
         _dragStart = _dragEnd = cp;
-        var tool = penEraser ? ToolKind.Eraser : state.Tool;
-        _activeTool = tool;
 
         bool paints = tool is ToolKind.Brush or ToolKind.Eraser or ToolKind.Smudge or ToolKind.Blur
-            or ToolKind.Fill or ToolKind.Gradient or ToolKind.Shape;
+            or ToolKind.Gradient or ToolKind.Shape;
         if (paints && !engine.ActiveLayer.Visible)
         {
             Message?.Invoke("Le calque actif est masqué");
@@ -906,36 +1308,16 @@ public sealed class CanvasView : Control, ICustomHitTest
                 _pixel.Add(new InputPoint(cp.X, cp.Y, pressure));
                 _gesture = Gesture.Tool;
                 break;
-            case ToolKind.Fill:
-                using (var tone = state.CreateTone())
-                    engine.Fill((int)MathF.Floor(cp.X), (int)MathF.Floor(cp.Y), state.Color, state.FillTolerance,
-                        state.FillExpand, state.FillSampleAll, state.FillOpacity, tone);
-                state.PushRecent(state.Color);
-                _gesture = Gesture.Blocked;
-                break;
             case ToolKind.Gradient:
                 var to = state.GradientToTransparent ? state.Color.WithAlpha(0) : state.SecondaryColor;
                 _gradient = new GradientSession(engine, cp, state.Color, to, state.GradientKind, state.FillOpacity);
                 _gesture = Gesture.Tool;
                 break;
-            case ToolKind.Eyedropper:
-                _gesture = Gesture.Pick;
-                Pick(pos);
-                break;
             case ToolKind.Shape:
                 _shapeSession = new BrushStrokeSession(engine, state.PaintBrush, state.Color, StrokeMode.Paint, (float)_zoom);
                 _gesture = Gesture.Tool;
                 break;
-            case ToolKind.Text:
-                TextRequested?.Invoke(cp);
-                _gesture = Gesture.Blocked;
-                break;
-            case ToolKind.Select when state.SelectKind == SelectKind.Wand:
-                if (!engine.SelectByColor((int)MathF.Floor(cp.X), (int)MathF.Floor(cp.Y), state.FillTolerance, state.FillSampleAll, CurrentSelectOp()))
-                    Message?.Invoke("Rien à sélectionner ici");
-                _gesture = Gesture.Blocked;
-                break;
-            case ToolKind.Select:
+            case ToolKind.Select when state.SelectKind != SelectKind.Wand:
                 _lasso = new List<SKPoint> { cp };
                 _gesture = Gesture.Tool;
                 break;
@@ -949,7 +1331,11 @@ public sealed class CanvasView : Control, ICustomHitTest
                 _gesture = Gesture.Tool;
                 break;
             case ToolKind.Hand:
-                BeginPan(pos);
+                BeginPan(pointerId, pos);
+                break;
+            default:
+                // Souris et stylet : pot, pipette, texte et baguette agissent tout de suite.
+                RunInstantTool(pointerId, pos, tool);
                 break;
         }
     }
@@ -983,12 +1369,15 @@ public sealed class CanvasView : Control, ICustomHitTest
             case ToolKind.Select:
                 if (_lasso == null) break;
                 _dragEnd = cp;
+                // Maj tenue depuis le début du tracé choisit « ajouter » ; pour aussi contraindre en carré,
+                // on la relâche puis on la presse à nouveau pendant le tracé.
+                if (!_shift) _shiftFromStart = false;
                 if (_state!.SelectKind == SelectKind.Lasso)
                 {
                     var last = _lasso[^1];
                     if (SKPoint.Distance(last, cp) * _zoom > 2) _lasso.Add(cp);
                 }
-                else if (_shift)
+                else if (_shift && !_shiftFromStart)
                 {
                     float s = MathF.Max(MathF.Abs(cp.X - _dragStart.X), MathF.Abs(cp.Y - _dragStart.Y));
                     _dragEnd = new SKPoint(_dragStart.X + MathF.Sign(cp.X - _dragStart.X) * s, _dragStart.Y + MathF.Sign(cp.Y - _dragStart.Y) * s);
@@ -1041,11 +1430,28 @@ public sealed class CanvasView : Control, ICustomHitTest
             if (commit) FinishSelection();
             _lasso = null;
         }
+        if (!commit && _activeTool == ToolKind.Transform && _tDrag != TDrag.None && Transform != null)
+        {
+            // Glisser annulé (2ᵉ doigt) : la transformation revient à son état d'avant le glisser.
+            _tOffset = _tStartOffset;
+            _tScaleX = _tStartSX;
+            _tScaleY = _tStartSY;
+            _tRot = _tStartRot;
+            ApplyTransform();
+        }
         _tDrag = TDrag.None;
         _constraint = null;
         _gesture = Gesture.None;
         _toolPointerId = -1;
         InvalidateVisual();
+    }
+
+    void BeginPick(int pointerId, Point pos)
+    {
+        _gesture = Gesture.Pick;
+        _toolPointerId = pointerId;
+        _pickRestore = _state!.Color;
+        Pick(pos);
     }
 
     void Pick(Point pos)
@@ -1071,6 +1477,13 @@ public sealed class CanvasView : Control, ICustomHitTest
         InvalidateVisual();
     }
 
+    /// <summary>Pipette interrompue par un 2ᵉ doigt : la couleur d'avant revient.</summary>
+    void CancelPick()
+    {
+        if (_state != null && _pickRing != null) _state.SetColor(_pickRestore);
+        EndPick();
+    }
+
     bool _alt;
 
     SelectionOp CurrentSelectOp() => _shift ? SelectionOp.Add : _alt ? SelectionOp.Subtract : _state!.SelectOp;
@@ -1079,31 +1492,40 @@ public sealed class CanvasView : Control, ICustomHitTest
     {
         if (_engine == null || _state == null || _lasso == null) return;
         var path = new SKPath();
+        bool tap;
         if (_state.SelectKind == SelectKind.Lasso)
         {
-            if (_lasso.Count < 3)
+            tap = _lasso.Count < 3;
+            if (!tap)
             {
-                if (CurrentSelectOp() == SelectionOp.Replace) _engine.Selection.Clear();
-                path.Dispose();
-                return;
+                path.MoveTo(_lasso[0]);
+                for (int i = 1; i < _lasso.Count; i++) path.LineTo(_lasso[i]);
+                path.Close();
             }
-            path.MoveTo(_lasso[0]);
-            for (int i = 1; i < _lasso.Count; i++) path.LineTo(_lasso[i]);
-            path.Close();
         }
         else
         {
             var r = NormalizedRect(_dragStart, _dragEnd);
-            if (r.Width * _zoom < 3 && r.Height * _zoom < 3)
+            tap = r.Width * _zoom < 3 && r.Height * _zoom < 3;
+            if (!tap)
             {
-                if (CurrentSelectOp() == SelectionOp.Replace) _engine.Selection.Clear();
-                path.Dispose();
-                return;
+                if (_state.SelectKind == SelectKind.Ellipse) path.AddOval(r);
+                else path.AddRect(r);
             }
-            if (_state.SelectKind == SelectKind.Ellipse) path.AddOval(r);
-            else path.AddRect(r);
         }
-        _engine.Selection.Combine(path, CurrentSelectOp());
+        var selection = _engine.Selection;
+        var op = _selectOp;
+        // Un simple tap désélectionne (en mode Nouvelle). Une forme sans surface (rectangle plat, lasso
+        // réduit à un trait) est ignorée par Selection, comme une absence de sélection.
+        selection.Record(_engine.History, "Sélection", () =>
+        {
+            if (!tap) selection.Combine(path, op);
+            else
+            {
+                path.Dispose();
+                if (op == SelectionOp.Replace) selection.Clear();
+            }
+        });
     }
 
     void UpdateShape()
@@ -1343,7 +1765,9 @@ public sealed class CanvasView : Control, ICustomHitTest
             {
                 double d0 = Dist(_tStartPos, centerS);
                 if (d0 < 2) return;
+                var cb = Transform.ContentBounds;
                 float f = (float)(Dist(pos, centerS) / d0);
+                f = MathF.Max(f, MathF.Max(MinScaleFactor(_tStartSX, cb.Width), MinScaleFactor(_tStartSY, cb.Height)));
                 _tScaleX = _tStartSX * f;
                 _tScaleY = _tStartSY * f;
                 break;
@@ -1362,9 +1786,10 @@ public sealed class CanvasView : Control, ICustomHitTest
                 dir /= len;
                 double d0 = Vector.Dot(_tStartPos - centerS, dir);
                 if (Math.Abs(d0) < 2) return;
+                var cb = Transform.ContentBounds;
                 float f = (float)(Vector.Dot(pos - centerS, dir) / d0);
-                if (_tDrag == TDrag.ScaleX) _tScaleX = _tStartSX * f;
-                else _tScaleY = _tStartSY * f;
+                if (_tDrag == TDrag.ScaleX) _tScaleX = _tStartSX * MathF.Max(f, MinScaleFactor(_tStartSX, cb.Width));
+                else _tScaleY = _tStartSY * MathF.Max(f, MinScaleFactor(_tStartSY, cb.Height));
                 break;
             }
             case TDrag.Rotate:
@@ -1380,6 +1805,13 @@ public sealed class CanvasView : Control, ICustomHitTest
         }
         ApplyTransform();
     }
+
+    /// <summary>
+    /// Facteur minimal d'un glisser d'échelle : le contenu garde au moins 1 px de côté, ne s'écrase pas
+    /// à 0 et ne se retourne pas en passant par le centre (le retournement a ses propres boutons).
+    /// </summary>
+    static float MinScaleFactor(float startScale, float extent) =>
+        1f / MathF.Max(1e-3f, MathF.Abs(startScale) * MathF.Max(1f, extent));
 
     void DrawTransformHandles(DrawingContext ctx)
     {
@@ -1397,6 +1829,48 @@ public sealed class CanvasView : Control, ICustomHitTest
             ctx.DrawRectangle(HandleFill, HandlePen, new Rect(p.X - 6, p.Y - 6, 12, 12), 2, 2);
         for (int i = 0; i < 4; i++)
             ctx.DrawEllipse(HandleFill, HandlePen, Mid(c[i], c[(i + 1) % 4]), 5.5, 5.5);
+    }
+
+    /// <summary>
+    /// Fourmis d'un contour énorme, tracées directement par Skia en filets (épaisseur nulle) : Avalonia
+    /// calculerait sinon le contour épaissi de centaines de milliers de segments à chaque image.
+    /// Rendue sur le fil de rendu, à partir d'une copie figée du chemin.
+    /// </summary>
+    sealed class OutlineDraw : ICustomDrawOperation
+    {
+        readonly SKPath _path;
+        readonly SKMatrix _matrix;
+        readonly float _dash;
+
+        public OutlineDraw(SKPath path, Matrix view, Rect bounds, float dash)
+        {
+            _path = path;
+            _matrix = new SKMatrix((float)view.M11, (float)view.M21, (float)view.M31,
+                (float)view.M12, (float)view.M22, (float)view.M32, 0, 0, 1);
+            _dash = dash;
+            Bounds = bounds;
+        }
+
+        public Rect Bounds { get; }
+        public bool HitTest(Point p) => false;
+        public bool Equals(ICustomDrawOperation? other) => false;
+        public void Dispose() { }
+
+        public void Render(ImmediateDrawingContext context)
+        {
+            var feature = context.TryGetFeature<ISkiaSharpApiLeaseFeature>();
+            if (feature == null) return;
+            using var lease = feature.Lease();
+            var c = lease.SkCanvas;
+            c.Save();
+            c.Concat(_matrix);
+            using (var white = new SKPaint { Style = SKPaintStyle.Stroke, StrokeWidth = 0, IsAntialias = true, Color = SKColors.White })
+                c.DrawPath(_path, white);
+            using (var dash = SKPathEffect.CreateDash(new[] { _dash, _dash }, 0))
+            using (var black = new SKPaint { Style = SKPaintStyle.Stroke, StrokeWidth = 0, IsAntialias = true, Color = SKColors.Black, PathEffect = dash })
+                c.DrawPath(_path, black);
+            c.Restore();
+        }
     }
 
     // ================================================================ utilitaires
